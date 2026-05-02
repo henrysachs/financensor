@@ -1,0 +1,6 @@
+financensor
+financensor.db
+uploads/
+.env
+.git
+*.md
