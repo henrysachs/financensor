@@ -1,3 +1,10 @@
+## [0.2.1](https://github.com/henrysachs/financensor/compare/v0.2.0...v0.2.1) (2026-05-03)
+
+
+### Bug Fixes
+
+* persist auth debug logs to localStorage for PWA debugging ([6b9f2e9](https://github.com/henrysachs/financensor/commit/6b9f2e989fe78b29a935fbb5fa28158bec13ab96))
+
 # [0.2.0](https://github.com/henrysachs/financensor/compare/v0.1.0...v0.2.0) (2026-05-03)
 
 
