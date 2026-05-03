@@ -1,3 +1,10 @@
+# [0.4.0](https://github.com/henrysachs/financensor/compare/v0.3.0...v0.4.0) (2026-05-03)
+
+
+### Features
+
+* bulk category assignment for selected purchases ([61203de](https://github.com/henrysachs/financensor/commit/61203de3f6a7c157bec923aeb83d6fe4825fcf2d))
+
 # [0.3.0](https://github.com/henrysachs/financensor/compare/v0.2.3...v0.3.0) (2026-05-03)
 
 
