@@ -1,11 +1,17 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useState } from 'react'
+import { isAuthenticated } from '@/lib/auth'
 
 const API_ORIGIN = import.meta.env.PROD
   ? 'https://api.financensor.stammkneipe.dev'
   : ''
 
 export const Route = createFileRoute('/')({
+  beforeLoad: () => {
+    if (isAuthenticated()) {
+      throw redirect({ to: '/dashboard' })
+    }
+  },
   component: Index,
 })
 
