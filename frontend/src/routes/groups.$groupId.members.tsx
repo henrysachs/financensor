@@ -1,5 +1,5 @@
 import { createFileRoute, redirect, Link } from '@tanstack/react-router'
-import { api, type Member, type Invite, type APIKey } from '@/lib/api'
+import { api, type Member, type Invite, type APIKey, type Category } from '@/lib/api'
 import { isAuthenticated, clearToken } from '@/lib/auth'
 import { useState, useEffect } from 'react'
 
@@ -16,19 +16,21 @@ export const Route = createFileRoute('/groups/$groupId/members')({
     }
   },
   loader: async ({ params }) => {
-    const [group, members, user] = await Promise.all([
+    const [group, members, user, categories] = await Promise.all([
       api.getGroup(params.groupId),
       api.listMembers(params.groupId),
       api.getMe(),
+      api.listCategories(params.groupId),
     ])
-    return { group, members, user }
+    return { group, members, user, categories }
   },
   component: MembersPage,
 })
 
 function MembersPage() {
-  const { group, members: initialMembers, user } = Route.useLoaderData()
+  const { group, members: initialMembers, user, categories: initialCategories } = Route.useLoaderData()
   const [members, setMembers] = useState(initialMembers)
+  const [categories, setCategories] = useState(initialCategories)
   const [showAddGhost, setShowAddGhost] = useState(false)
   const [ghostName, setGhostName] = useState('')
   const [adding, setAdding] = useState(false)
@@ -150,8 +152,86 @@ function MembersPage() {
         </div>
       )}
 
+      {isCurrentUserAdmin && <CategorySection groupId={group.id} categories={categories} onChange={setCategories} />}
       {isCurrentUserAdmin && <APIKeySection groupId={group.id} members={members} apiKeys={apiKeys} onChange={setAPIKeys} />}
       {isCurrentUserAdmin && <InviteSection groupId={group.id} />}
+    </div>
+  )
+}
+
+function CategorySection({
+  groupId,
+  categories,
+  onChange,
+}: {
+  groupId: string
+  categories: Category[]
+  onChange: (categories: Category[]) => void
+}) {
+  const [newName, setNewName] = useState('')
+  const [creating, setCreating] = useState(false)
+
+  const handleCreate = async () => {
+    if (!newName.trim()) return
+    setCreating(true)
+    try {
+      const { id } = await api.createCategory(groupId, newName.trim())
+      onChange([...categories, { id, groupId, name: newName.trim() }])
+      setNewName('')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const handleDelete = async (categoryId: string) => {
+    if (!confirm('Kategorie wirklich löschen? Ausgaben behalten ihre Daten, verlieren aber die Zuordnung.')) return
+    await api.deleteCategory(groupId, categoryId)
+    onChange(categories.filter((c) => c.id !== categoryId))
+  }
+
+  return (
+    <div className="mt-8 border-t pt-6">
+      <h2 className="text-sm font-medium">Kategorien</h2>
+      <p className="mt-1 text-xs text-muted-foreground">Kategorien zur Klassifizierung von Ausgaben (z.B. Essen, Haushalt).</p>
+
+      <div className="mt-3 flex gap-2">
+        <input
+          type="text"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleCreate()
+          }}
+          placeholder="Neue Kategorie"
+          className="flex-1 rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+        />
+        <button
+          onClick={handleCreate}
+          disabled={creating || !newName.trim()}
+          className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          {creating ? '...' : '+ Kategorie'}
+        </button>
+      </div>
+
+      {categories.length === 0 ? (
+        <p className="mt-3 text-xs text-muted-foreground">Noch keine Kategorien vorhanden.</p>
+      ) : (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {categories.map((cat) => (
+            <div key={cat.id} className="flex items-center gap-1 rounded-md border bg-card px-2.5 py-1.5">
+              <span className="text-sm">{cat.name}</span>
+              <button
+                onClick={() => handleDelete(cat.id)}
+                className="ml-1 rounded px-1 text-xs text-muted-foreground hover:text-destructive"
+                aria-label={`Kategorie ${cat.name} löschen`}
+              >
+                &times;
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

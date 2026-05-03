@@ -122,6 +122,16 @@ func registerGroupRoutes(api huma.API, db *sqlx.DB) {
 			return nil, huma.Error500InternalServerError("failed to add admin member", err)
 		}
 
+		// Seed default categories
+		defaultCategories := []string{"Essen", "Getränke", "Alkohol", "Haushalt", "Transport", "Freizeit"}
+		for _, name := range defaultCategories {
+			catID := uuid.New().String()
+			_, err = tx.Exec("INSERT INTO categories (id, group_id, name) VALUES (?, ?, ?)", catID, groupID, name)
+			if err != nil {
+				return nil, huma.Error500InternalServerError("failed to seed categories", err)
+			}
+		}
+
 		if err := tx.Commit(); err != nil {
 			return nil, huma.Error500InternalServerError("failed to commit", err)
 		}

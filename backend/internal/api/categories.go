@@ -26,6 +26,11 @@ type CreateCategoryOutput struct {
 	}
 }
 
+type DeleteCategoryInput struct {
+	GroupID    string `path:"groupID" doc:"Group ID"`
+	CategoryID string `path:"categoryID" doc:"Category ID"`
+}
+
 type ListCategoriesOutput struct {
 	Body []model.Category
 }
@@ -81,5 +86,39 @@ func registerCategoryRoutes(api huma.API, db *sqlx.DB) {
 		}
 
 		return &ListCategoriesOutput{Body: categories}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "delete-category",
+		Method:      http.MethodDelete,
+		Path:        "/groups/{groupID}/categories/{categoryID}",
+		Summary:     "Delete a category",
+		Tags:        []string{"Categories"},
+	}, func(ctx context.Context, input *DeleteCategoryInput) (*StatusOutput, error) {
+		userID := auth.GetUserID(ctx)
+
+		if !isMember(db, input.GroupID, userID) {
+			return nil, huma.Error403Forbidden("not a member")
+		}
+
+		// Nullify category_id on purchases that reference this category
+		_, err := db.Exec("UPDATE purchases SET category_id = NULL WHERE category_id = ? AND group_id = ?", input.CategoryID, input.GroupID)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to unassign purchases", err)
+		}
+
+		result, err := db.Exec("DELETE FROM categories WHERE id = ? AND group_id = ?", input.CategoryID, input.GroupID)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to delete category", err)
+		}
+
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			return nil, huma.Error404NotFound("category not found")
+		}
+
+		resp := &StatusOutput{}
+		resp.Body.Status = "deleted"
+		return resp, nil
 	})
 }

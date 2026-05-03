@@ -188,7 +188,7 @@ function BulkAddPurchases() {
   }, 0)
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8">
+    <div className="mx-auto max-w-7xl px-4 py-8">
       <header className="mb-6">
         <Link
           to="/groups/$groupId"
@@ -273,7 +273,7 @@ function BulkAddPurchases() {
 
       {/* Table */}
       <div className="space-y-2">
-        <div className="hidden md:grid md:grid-cols-[1fr_100px_140px_160px_minmax(200px,1fr)_32px] gap-2 px-1 text-xs font-medium text-muted-foreground">
+        <div className="hidden md:grid md:grid-cols-[1fr_100px_140px_160px_minmax(280px,2fr)_32px] gap-2 px-1 text-xs font-medium text-muted-foreground">
           <span>Beschreibung</span>
           <span>Betrag (€)</span>
           <span>Bezahlt von</span>
@@ -283,7 +283,7 @@ function BulkAddPurchases() {
         </div>
 
         {rows.map((row) => (
-          <div key={row.id} className="grid gap-2 rounded-lg border bg-card p-3 md:grid-cols-[1fr_100px_140px_160px_minmax(200px,1fr)_32px] md:border-0 md:bg-transparent md:p-0">
+          <div key={row.id} className="grid gap-2 rounded-lg border bg-card p-3 md:grid-cols-[1fr_100px_140px_160px_minmax(280px,2fr)_32px] md:border-0 md:bg-transparent md:p-0">
             <input
               ref={(el) => {
                 if (el) descriptionRefs.current.set(row.id, el)

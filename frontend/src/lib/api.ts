@@ -102,6 +102,8 @@ export const api = {
   listCategories: (groupId: string) => fetchAPI<Category[]>(`/groups/${groupId}/categories`),
   createCategory: (groupId: string, name: string) =>
     fetchAPI<{ id: string }>(`/groups/${groupId}/categories`, { method: 'POST', body: { name } }),
+  deleteCategory: (groupId: string, categoryId: string) =>
+    fetchAPI<void>(`/groups/${groupId}/categories/${categoryId}`, { method: 'DELETE' }),
 
   // Settlements
   getSettlements: (groupId: string) => fetchAPI<Settlement[]>(`/groups/${groupId}/settlements`),
