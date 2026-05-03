@@ -9,6 +9,9 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /financensor ./cmd/server
 
 FROM cgr.dev/chainguard/static:latest
 
+LABEL org.opencontainers.image.source="https://github.com/henrysachs/financensor"
+LABEL org.opencontainers.image.description="Financensor backend"
+
 COPY --from=builder /financensor /financensor
 
 EXPOSE 8080
