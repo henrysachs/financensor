@@ -789,17 +789,15 @@ function SettlementsView({ groupId, members, purchases, categories }: { groupId:
       {pieData.length > 0 && (
         <div className="rounded-lg border bg-card p-4">
           <h3 className="mb-3 text-sm font-medium text-muted-foreground">Verbrauch pro Person</h3>
-          <ChartContainer config={chartConfig} className="mx-auto aspect-square max-h-[200px]">
+          <ChartContainer config={chartConfig} className="mx-auto aspect-square max-h-[280px]">
             <PieChart>
               <Pie
                 data={pieData}
                 dataKey="value"
                 nameKey="name"
                 innerRadius={50}
-                outerRadius={80}
+                outerRadius={90}
                 paddingAngle={2}
-                labelLine={false}
-                label={({ name }) => typeof name === 'string' ? name : ''}
               >
                 {pieData.map((_, i) => (
                   <Cell key={i} fill={COLORS[i % COLORS.length]} />

@@ -125,10 +125,52 @@ function InfoDrawer({ onClose }: { onClose: () => void }) {
             <p className="mt-1 text-xs text-muted-foreground">
               Deregistriert den Service Worker und löscht alle Caches.
             </p>
+
+            <AuthDebugSection />
           </section>
         </div>
       </div>
     </>
+  )
+}
+
+function AuthDebugSection() {
+  const [copied, setCopied] = useState(false)
+  const logs: string[] = JSON.parse(localStorage.getItem('auth_debug') ?? '[]')
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(logs.join('\n'))
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const handleClear = () => {
+    localStorage.removeItem('auth_debug')
+    setCopied(false)
+  }
+
+  if (logs.length === 0) return null
+
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="flex gap-2">
+        <button
+          onClick={handleCopy}
+          className="flex-1 rounded-md border px-3 py-2 text-sm hover:bg-accent transition-colors"
+        >
+          {copied ? 'Kopiert!' : `Auth-Logs kopieren (${logs.length})`}
+        </button>
+        <button
+          onClick={handleClear}
+          className="rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors"
+        >
+          Leeren
+        </button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Letzte Auth-Events zur Fehlerdiagnose.
+      </p>
+    </div>
   )
 }
 

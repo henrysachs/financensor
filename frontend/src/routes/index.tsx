@@ -1,5 +1,4 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
-import { useState } from 'react'
 import { isAuthenticated } from '@/lib/auth'
 
 const API_ORIGIN = import.meta.env.PROD
@@ -16,9 +15,6 @@ export const Route = createFileRoute('/')({
 })
 
 function Index() {
-  const [showDebug, setShowDebug] = useState(false)
-  const debugLogs: string[] = JSON.parse(localStorage.getItem('auth_debug') ?? '[]')
-
   return (
     <div className="flex min-h-screen items-center justify-center">
       <div className="text-center">
@@ -32,21 +28,6 @@ function Index() {
         >
           Mit Google anmelden
         </a>
-        {debugLogs.length > 0 && (
-          <div className="mt-8">
-            <button
-              onClick={() => setShowDebug(!showDebug)}
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              {showDebug ? 'Debug ausblenden' : 'Debug anzeigen'}
-            </button>
-            {showDebug && (
-              <pre className="mt-2 max-w-md mx-auto rounded border bg-card p-3 text-left text-[11px] text-muted-foreground overflow-auto max-h-48">
-                {debugLogs.join('\n')}
-              </pre>
-            )}
-          </div>
-        )}
       </div>
     </div>
   )
