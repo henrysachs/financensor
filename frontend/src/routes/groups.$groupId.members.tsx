@@ -2,9 +2,12 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { api, type Member, type Invite, type APIKey, type Category } from '@/lib/api'
 import { requireAuth } from '@/lib/auth'
 import { useState, useEffect } from 'react'
+import { RouteError, RouteSkeleton } from '@/components/route-error'
 
 export const Route = createFileRoute('/groups/$groupId/members')({
   beforeLoad: requireAuth,
+  errorComponent: ({ error }) => <RouteError error={error} />,
+  pendingComponent: RouteSkeleton,
   loader: async ({ params }) => {
     const [group, members, user, categories] = await Promise.all([
       api.getGroup(params.groupId),

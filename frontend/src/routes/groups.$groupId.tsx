@@ -4,9 +4,12 @@ import { requireAuth } from '@/lib/auth'
 import { useState, useEffect } from 'react'
 import { Pie, PieChart, Cell, Bar, BarChart, CartesianGrid, XAxis, YAxis, ReferenceLine } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
+import { RouteError, RouteSkeleton } from '@/components/route-error'
 
 export const Route = createFileRoute('/groups/$groupId')({
   beforeLoad: requireAuth,
+  errorComponent: ({ error }) => <RouteError error={error} />,
+  pendingComponent: RouteSkeleton,
   loader: async ({ params }) => {
     const [group, purchases, categories, members, user, trips] = await Promise.all([
       api.getGroup(params.groupId),

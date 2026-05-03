@@ -1,5 +1,6 @@
 import { createRootRoute, Outlet, useRouter } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
+import { Toaster } from 'sonner'
 import { useTheme } from '@/lib/theme'
 import { useState } from 'react'
 
@@ -35,6 +36,7 @@ function RootLayout() {
 
       {infoOpen && <InfoDrawer onClose={() => setInfoOpen(false)} />}
 
+      <Toaster position="top-center" richColors closeButton />
       <Outlet />
       <TanStackRouterDevtools />
     </div>

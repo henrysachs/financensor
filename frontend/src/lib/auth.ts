@@ -29,7 +29,7 @@ export async function requireAuth(): Promise<void> {
   debugLog(`token present (${token.slice(0, 10)}...)`)
 
   try {
-    await api.getMe()
+    await api.getMeSilent()
     debugLog('token valid, getMe() succeeded')
   } catch (err) {
     if (err instanceof ApiError) {

@@ -2,9 +2,12 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { api } from '@/lib/api'
 import { requireAuth } from '@/lib/auth'
 import { useState, useEffect } from 'react'
+import { RouteError, RouteSkeleton } from '@/components/route-error'
 
 export const Route = createFileRoute('/invite/$inviteId')({
   beforeLoad: requireAuth,
+  errorComponent: ({ error }) => <RouteError error={error} />,
+  pendingComponent: RouteSkeleton,
   component: AcceptInvitePage,
 })
 

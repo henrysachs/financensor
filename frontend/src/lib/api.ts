@@ -1,4 +1,5 @@
 import { getToken } from './token'
+import { toast } from 'sonner'
 
 const API_BASE = import.meta.env.PROD
   ? 'https://api.financensor.stammkneipe.dev/api/v1'
@@ -21,13 +22,28 @@ export class NetworkError extends Error {
   }
 }
 
+/** RFC 9457 problem+json response shape */
+type ProblemDetail = {
+  type?: string
+  title?: string
+  status?: number
+  detail?: string
+  error?: string
+}
+
+function extractErrorMessage(body: ProblemDetail, status: number): string {
+  return body.detail ?? body.error ?? body.title ?? `HTTP ${status}`
+}
+
 type FetchOptions = {
   method?: string
   body?: unknown
+  /** Suppress toast for this request (e.g. auth checks) */
+  silent?: boolean
 }
 
 async function fetchAPI<T>(path: string, options: FetchOptions = {}): Promise<T> {
-  const { method = 'GET', body } = options
+  const { method = 'GET', body, silent = false } = options
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -46,12 +62,24 @@ async function fetchAPI<T>(path: string, options: FetchOptions = {}): Promise<T>
       body: body ? JSON.stringify(body) : undefined,
     })
   } catch (err) {
-    throw new NetworkError(err)
+    const networkError = new NetworkError(err)
+    if (!silent) {
+      toast.error('Netzwerkfehler', { description: 'Server nicht erreichbar. Bitte Verbindung prüfen.' })
+    }
+    throw networkError
   }
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: 'Unknown error' }))
-    throw new ApiError(res.status, error.error ?? `HTTP ${res.status}`)
+    const errorBody: ProblemDetail = await res.json().catch(() => ({ error: 'Unknown error' }))
+    const message = extractErrorMessage(errorBody, res.status)
+    const apiError = new ApiError(res.status, message)
+
+    // Show toast for non-401 errors (401 is handled by auth guard)
+    if (!silent && res.status !== 401) {
+      toast.error(errorBody.title ?? 'Fehler', { description: message })
+    }
+
+    throw apiError
   }
 
   return res.json() as Promise<T>
@@ -67,15 +95,24 @@ async function uploadFile(path: string, file: File): Promise<{ receiptUrl: strin
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
-    headers,
-    body: formData,
-  })
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    })
+  } catch (err) {
+    const networkError = new NetworkError(err)
+    toast.error('Netzwerkfehler', { description: 'Upload fehlgeschlagen.' })
+    throw networkError
+  }
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: 'Unknown error' }))
-    throw new Error(error.error ?? `HTTP ${res.status}`)
+    const errorBody: ProblemDetail = await res.json().catch(() => ({ error: 'Unknown error' }))
+    const message = extractErrorMessage(errorBody, res.status)
+    toast.error('Upload fehlgeschlagen', { description: message })
+    throw new ApiError(res.status, message)
   }
 
   return res.json() as Promise<{ receiptUrl: string }>
@@ -84,6 +121,7 @@ async function uploadFile(path: string, file: File): Promise<{ receiptUrl: strin
 export const api = {
   // Auth
   getMe: () => fetchAPI<User>('/users/me'),
+  getMeSilent: () => fetchAPI<User>('/users/me', { silent: true }),
 
   // Groups
   listGroups: () => fetchAPI<Group[]>('/groups'),

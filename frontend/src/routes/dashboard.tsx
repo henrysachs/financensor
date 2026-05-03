@@ -1,9 +1,12 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { api, type Group } from '@/lib/api'
 import { requireAuth } from '@/lib/auth'
+import { RouteError, RouteSkeleton } from '@/components/route-error'
 
 export const Route = createFileRoute('/dashboard')({
   beforeLoad: requireAuth,
+  errorComponent: ({ error }) => <RouteError error={error} />,
+  pendingComponent: RouteSkeleton,
   loader: async () => {
     const [groups, user] = await Promise.all([api.listGroups(), api.getMe()])
     return { groups, user }
