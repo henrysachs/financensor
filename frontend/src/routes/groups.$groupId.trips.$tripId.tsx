@@ -1,20 +1,10 @@
-import { createFileRoute, redirect, Link, useRouter } from '@tanstack/react-router'
+import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
 import { api, type PurchaseWithAssignments, type Member, type Category } from '@/lib/api'
-import { isAuthenticated, clearToken } from '@/lib/auth'
+import { requireAuth } from '@/lib/auth'
 import { useState } from 'react'
 
 export const Route = createFileRoute('/groups/$groupId/trips/$tripId')({
-  beforeLoad: async () => {
-    if (!isAuthenticated()) {
-      throw redirect({ to: '/' })
-    }
-    try {
-      await api.getMe()
-    } catch {
-      clearToken()
-      throw redirect({ to: '/' })
-    }
-  },
+  beforeLoad: requireAuth,
   loader: async ({ params }) => {
     const [group, trip, purchases, members, categories, user] = await Promise.all([
       api.getGroup(params.groupId),

@@ -1,19 +1,9 @@
-import { createFileRoute, redirect, Link } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { api, type Group } from '@/lib/api'
-import { isAuthenticated, clearToken } from '@/lib/auth'
+import { requireAuth } from '@/lib/auth'
 
 export const Route = createFileRoute('/dashboard')({
-  beforeLoad: async () => {
-    if (!isAuthenticated()) {
-      throw redirect({ to: '/' })
-    }
-    try {
-      await api.getMe()
-    } catch {
-      clearToken()
-      throw redirect({ to: '/' })
-    }
-  },
+  beforeLoad: requireAuth,
   loader: async () => {
     const [groups, user] = await Promise.all([api.listGroups(), api.getMe()])
     return { groups, user }

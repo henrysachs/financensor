@@ -1,20 +1,10 @@
-import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { api } from '@/lib/api'
-import { isAuthenticated, clearToken } from '@/lib/auth'
+import { requireAuth } from '@/lib/auth'
 import { useState, useEffect } from 'react'
 
 export const Route = createFileRoute('/invite/$inviteId')({
-  beforeLoad: async () => {
-    if (!isAuthenticated()) {
-      throw redirect({ to: '/' })
-    }
-    try {
-      await api.getMe()
-    } catch {
-      clearToken()
-      throw redirect({ to: '/' })
-    }
-  },
+  beforeLoad: requireAuth,
   component: AcceptInvitePage,
 })
 

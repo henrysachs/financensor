@@ -1,8 +1,25 @@
-import { getToken } from './auth'
+import { getToken } from './token'
 
 const API_BASE = import.meta.env.PROD
   ? 'https://api.financensor.stammkneipe.dev/api/v1'
   : '/api/v1'
+
+export class ApiError extends Error {
+  readonly status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
+export class NetworkError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'Network error')
+    this.name = 'NetworkError'
+    this.cause = cause
+  }
+}
 
 type FetchOptions = {
   method?: string
@@ -21,15 +38,20 @@ async function fetchAPI<T>(path: string, options: FetchOptions = {}): Promise<T>
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  } catch (err) {
+    throw new NetworkError(err)
+  }
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: 'Unknown error' }))
-    throw new Error(error.error ?? `HTTP ${res.status}`)
+    throw new ApiError(res.status, error.error ?? `HTTP ${res.status}`)
   }
 
   return res.json() as Promise<T>

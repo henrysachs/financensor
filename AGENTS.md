@@ -32,7 +32,8 @@ cd frontend && npx tsc -b && npx vite build
 Target: Hetzner VPS (`ssh hetzner`), Docker Compose with Traefik (auto-HTTPS).
 
 ```bash
-./deploy.sh   # rsync + docker compose up --build -d
+mise run deploy        # rsync + env + build on server (no release)
+mise run release-deploy  # semantic-release + deploy tagged version
 ```
 
 Backend image: `cgr.dev/chainguard/static` (no shell — healthcheck uses `/financensor -health`).

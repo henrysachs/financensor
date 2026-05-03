@@ -1,22 +1,12 @@
-import { createFileRoute, redirect, Outlet, useMatchRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Outlet, useMatchRoute, Link } from '@tanstack/react-router'
 import { api, type Member, type PurchaseWithAssignments, type Category, type Trip } from '@/lib/api'
-import { isAuthenticated, clearToken } from '@/lib/auth'
+import { requireAuth } from '@/lib/auth'
 import { useState, useEffect } from 'react'
 import { Pie, PieChart, Cell, Bar, BarChart, CartesianGrid, XAxis, YAxis, ReferenceLine } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 
 export const Route = createFileRoute('/groups/$groupId')({
-  beforeLoad: async () => {
-    if (!isAuthenticated()) {
-      throw redirect({ to: '/' })
-    }
-    try {
-      await api.getMe()
-    } catch {
-      clearToken()
-      throw redirect({ to: '/' })
-    }
-  },
+  beforeLoad: requireAuth,
   loader: async ({ params }) => {
     const [group, purchases, categories, members, user, trips] = await Promise.all([
       api.getGroup(params.groupId),
