@@ -1,3 +1,10 @@
+## [0.2.2](https://github.com/henrysachs/financensor/compare/v0.2.1...v0.2.2) (2026-05-03)
+
+
+### Bug Fixes
+
+* redirect to dashboard on / if already authenticated ([29ddb3a](https://github.com/henrysachs/financensor/commit/29ddb3af3aa08b304782b7af4245ae17a618a123))
+
 ## [0.2.1](https://github.com/henrysachs/financensor/compare/v0.2.0...v0.2.1) (2026-05-03)
 
 
