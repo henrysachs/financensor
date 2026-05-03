@@ -301,9 +301,10 @@ function PurchasesView({
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'date' | 'alpha' | 'amount'>('date')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const [bulkAction, setBulkAction] = useState<'delete' | 'move' | 'paidby' | null>(null)
+  const [bulkAction, setBulkAction] = useState<'delete' | 'move' | 'paidby' | 'category' | null>(null)
   const [bulkTripId, setBulkTripId] = useState('')
   const [bulkPaidBy, setBulkPaidBy] = useState('')
+  const [bulkCategoryId, setBulkCategoryId] = useState('')
 
   const filteredPurchases = localPurchases
     .filter((p) => !filterCategoryId || p.categoryId === filterCategoryId)
@@ -390,6 +391,31 @@ function PurchasesView({
     setBulkPaidBy('')
   }
 
+  const handleBulkChangeCategory = async () => {
+    const categoryValue = bulkCategoryId || undefined
+    await Promise.all(
+      Array.from(selectedIds).map((id) => {
+        const p = localPurchases.find((x) => x.id === id)
+        if (!p) return Promise.resolve()
+        return api.updatePurchase(groupId, id, {
+          description: p.description,
+          amountCents: p.amountCents,
+          paidByUserId: p.paidByUserId,
+          categoryId: categoryValue,
+          tripId: p.tripId,
+          purchasedAt: p.purchasedAt,
+          assignedTo: p.assignments.map((a) => a.userId),
+        })
+      })
+    )
+    setLocalPurchases((prev) =>
+      prev.map((p) => (selectedIds.has(p.id) ? { ...p, categoryId: categoryValue } : p))
+    )
+    setSelectedIds(new Set())
+    setBulkAction(null)
+    setBulkCategoryId('')
+  }
+
   const handleDelete = async (purchaseId: string) => {
     if (!confirm('Ausgabe wirklich löschen?')) return
     await api.deletePurchase(groupId, purchaseId)
@@ -467,6 +493,9 @@ function PurchasesView({
           <button onClick={() => setBulkAction('paidby')} className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent">
             Bezahlt von
           </button>
+          <button onClick={() => setBulkAction('category')} className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent">
+            Kategorie
+          </button>
           {bulkAction === 'move' && (
             <div className="flex items-center gap-1">
               <select value={bulkTripId} onChange={(e) => setBulkTripId(e.target.value)} className="rounded-md border bg-background px-2 py-1 text-xs">
@@ -483,6 +512,15 @@ function PurchasesView({
                 {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
               </select>
               <button onClick={handleBulkChangePaidBy} disabled={!bulkPaidBy} className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50">OK</button>
+            </div>
+          )}
+          {bulkAction === 'category' && (
+            <div className="flex items-center gap-1">
+              <select value={bulkCategoryId} onChange={(e) => setBulkCategoryId(e.target.value)} className="rounded-md border bg-background px-2 py-1 text-xs">
+                <option value="">Keine Kategorie</option>
+                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <button onClick={handleBulkChangeCategory} className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground">OK</button>
             </div>
           )}
         </div>
