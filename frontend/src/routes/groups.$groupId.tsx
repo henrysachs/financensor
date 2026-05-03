@@ -2,7 +2,7 @@ import { createFileRoute, redirect, Outlet, useMatchRoute, Link } from '@tanstac
 import { api, type Member, type PurchaseWithAssignments, type Category, type Trip } from '@/lib/api'
 import { isAuthenticated, clearToken } from '@/lib/auth'
 import { useState, useEffect } from 'react'
-import { Pie, PieChart, Cell, Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
+import { Pie, PieChart, Cell, Bar, BarChart, CartesianGrid, XAxis, YAxis, ReferenceLine } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 
 export const Route = createFileRoute('/groups/$groupId')({
@@ -83,7 +83,7 @@ function GroupDetail() {
 
       <div className="mb-6 flex gap-2">
         <TabButton active={activeTab === 'trips'} onClick={() => setActiveTab('trips')}>
-          Einkäufe
+          Aktivitäten
         </TabButton>
         <TabButton active={activeTab === 'purchases'} onClick={() => setActiveTab('purchases')}>
           Alle Ausgaben
@@ -103,11 +103,12 @@ function GroupDetail() {
           purchases={purchases}
           categories={categories}
           members={members}
+          trips={trips}
         />
       )}
 
       {activeTab === 'settlements' && (
-        <SettlementsView groupId={group.id} members={members} purchases={purchases} />
+        <SettlementsView groupId={group.id} members={members} purchases={purchases} categories={categories} />
       )}
     </div>
   )
@@ -169,12 +170,12 @@ function TripsView({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{trips.length} Einkäufe</p>
+        <p className="text-sm text-muted-foreground">{trips.length} Aktivitäten</p>
         <button
           onClick={() => setShowCreate(!showCreate)}
           className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
         >
-          + Neuer Einkauf
+          + Neue Aktivität
         </button>
       </div>
 
@@ -217,8 +218,8 @@ function TripsView({
 
       {trips.length === 0 && !showCreate ? (
         <div className="rounded-lg border border-dashed p-8 text-center">
-          <p className="text-muted-foreground">Noch keine Einkäufe angelegt.</p>
-          <p className="mt-1 text-xs text-muted-foreground">Erstelle einen Einkauf um Ausgaben zu gruppieren.</p>
+          <p className="text-muted-foreground">Noch keine Aktivitäten angelegt.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Erstelle eine Aktivität um Ausgaben zu gruppieren.</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -288,17 +289,103 @@ function TripCard({
 function PurchasesView({
   groupId,
   purchases,
-  categories: _categories,
+  categories,
   members,
+  trips,
 }: {
   groupId: string
   purchases: PurchaseWithAssignments[]
   categories: Category[]
   members: Member[]
+  trips: Trip[]
 }) {
   const memberMap = new Map(members.map((m) => [m.id, m]))
+  const categoryMap = new Map(categories.map((c) => [c.id, c]))
   const [editingId, setEditingId] = useState<string | null>(null)
   const [localPurchases, setLocalPurchases] = useState(purchases)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [filterCategoryId, setFilterCategoryId] = useState<string | ''>('')
+  const [bulkAction, setBulkAction] = useState<'delete' | 'move' | 'paidby' | null>(null)
+  const [bulkTripId, setBulkTripId] = useState('')
+  const [bulkPaidBy, setBulkPaidBy] = useState('')
+
+  const filteredPurchases = filterCategoryId
+    ? localPurchases.filter((p) => p.categoryId === filterCategoryId)
+    : localPurchases
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleAll = () => {
+    if (selectedIds.size === filteredPurchases.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filteredPurchases.map((p) => p.id)))
+    }
+  }
+
+  const handleBulkDelete = async () => {
+    if (!confirm(`${selectedIds.size} Ausgaben löschen?`)) return
+    await Promise.all(Array.from(selectedIds).map((id) => api.deletePurchase(groupId, id)))
+    setLocalPurchases((prev) => prev.filter((p) => !selectedIds.has(p.id)))
+    setSelectedIds(new Set())
+  }
+
+  const handleBulkMoveToTrip = async () => {
+    if (!bulkTripId) return
+    await Promise.all(
+      Array.from(selectedIds).map((id) => {
+        const p = localPurchases.find((x) => x.id === id)
+        if (!p) return Promise.resolve()
+        return api.updatePurchase(groupId, id, {
+          description: p.description,
+          amountCents: p.amountCents,
+          paidByUserId: p.paidByUserId,
+          categoryId: p.categoryId,
+          tripId: bulkTripId,
+          purchasedAt: p.purchasedAt,
+          assignedTo: p.assignments.map((a) => a.userId),
+        })
+      })
+    )
+    setLocalPurchases((prev) =>
+      prev.map((p) => (selectedIds.has(p.id) ? { ...p, tripId: bulkTripId } : p))
+    )
+    setSelectedIds(new Set())
+    setBulkAction(null)
+    setBulkTripId('')
+  }
+
+  const handleBulkChangePaidBy = async () => {
+    if (!bulkPaidBy) return
+    await Promise.all(
+      Array.from(selectedIds).map((id) => {
+        const p = localPurchases.find((x) => x.id === id)
+        if (!p) return Promise.resolve()
+        return api.updatePurchase(groupId, id, {
+          description: p.description,
+          amountCents: p.amountCents,
+          paidByUserId: bulkPaidBy,
+          categoryId: p.categoryId,
+          tripId: p.tripId,
+          purchasedAt: p.purchasedAt,
+          assignedTo: p.assignments.map((a) => a.userId),
+        })
+      })
+    )
+    setLocalPurchases((prev) =>
+      prev.map((p) => (selectedIds.has(p.id) ? { ...p, paidByUserId: bulkPaidBy } : p))
+    )
+    setSelectedIds(new Set())
+    setBulkAction(null)
+    setBulkPaidBy('')
+  }
 
   const handleDelete = async (purchaseId: string) => {
     if (!confirm('Ausgabe wirklich löschen?')) return
@@ -306,12 +393,12 @@ function PurchasesView({
     setLocalPurchases((prev) => prev.filter((p) => p.id !== purchaseId))
   }
 
-  const handleUpdate = async (purchaseId: string, data: { description: string; amountCents: number; paidByUserId: string; purchasedAt?: string; assignedTo: string[] }) => {
+  const handleUpdate = async (purchaseId: string, data: { description: string; amountCents: number; paidByUserId: string; categoryId?: string; tripId?: string; purchasedAt?: string; assignedTo: string[] }) => {
     await api.updatePurchase(groupId, purchaseId, { ...data })
     setLocalPurchases((prev) =>
       prev.map((p) =>
         p.id === purchaseId
-          ? { ...p, description: data.description, amountCents: data.amountCents, paidByUserId: data.paidByUserId, purchasedAt: data.purchasedAt ?? p.purchasedAt }
+          ? { ...p, description: data.description, amountCents: data.amountCents, paidByUserId: data.paidByUserId, categoryId: data.categoryId, tripId: data.tripId, purchasedAt: data.purchasedAt ?? p.purchasedAt }
           : p
       )
     )
@@ -320,6 +407,60 @@ function PurchasesView({
 
   return (
     <div>
+      {/* Category filter */}
+      <div className="mb-4 flex items-center gap-3">
+        <select
+          value={filterCategoryId}
+          onChange={(e) => setFilterCategoryId(e.target.value)}
+          className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="">Alle Kategorien</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+        {filteredPurchases.length > 0 && (
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <input type="checkbox" checked={selectedIds.size === filteredPurchases.length && filteredPurchases.length > 0} onChange={toggleAll} className="rounded" />
+            Alle
+          </label>
+        )}
+      </div>
+
+      {/* Bulk action toolbar */}
+      {selectedIds.size > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 p-3">
+          <span className="text-sm font-medium">{selectedIds.size} ausgewählt</span>
+          <button onClick={handleBulkDelete} className="rounded-md bg-destructive px-2 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90">
+            Löschen
+          </button>
+          <button onClick={() => setBulkAction('move')} className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent">
+            Verschieben
+          </button>
+          <button onClick={() => setBulkAction('paidby')} className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent">
+            Bezahlt von
+          </button>
+          {bulkAction === 'move' && (
+            <div className="flex items-center gap-1">
+              <select value={bulkTripId} onChange={(e) => setBulkTripId(e.target.value)} className="rounded-md border bg-background px-2 py-1 text-xs">
+                <option value="">Aktivität wählen...</option>
+                {trips.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+              <button onClick={handleBulkMoveToTrip} disabled={!bulkTripId} className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50">OK</button>
+            </div>
+          )}
+          {bulkAction === 'paidby' && (
+            <div className="flex items-center gap-1">
+              <select value={bulkPaidBy} onChange={(e) => setBulkPaidBy(e.target.value)} className="rounded-md border bg-background px-2 py-1 text-xs">
+                <option value="">Person wählen...</option>
+                {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+              <button onClick={handleBulkChangePaidBy} disabled={!bulkPaidBy} className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50">OK</button>
+            </div>
+          )}
+        </div>
+      )}
+
       {localPurchases.length === 0 ? (
         <div className="rounded-lg border border-dashed p-8 text-center">
           <p className="text-muted-foreground">Noch keine Ausgaben erfasst.</p>
@@ -333,12 +474,14 @@ function PurchasesView({
         </div>
       ) : (
         <div className="space-y-2">
-          {localPurchases.map((purchase) =>
+          {filteredPurchases.map((purchase) =>
             editingId === purchase.id ? (
               <EditPurchaseRow
                 key={purchase.id}
                 purchase={purchase}
                 members={members}
+                categories={categories}
+                groupId={groupId}
                 onSave={(data) => handleUpdate(purchase.id, data)}
                 onCancel={() => setEditingId(null)}
               />
@@ -347,6 +490,9 @@ function PurchasesView({
                 key={purchase.id}
                 purchase={purchase}
                 paidByName={memberMap.get(purchase.paidByUserId)?.name ?? 'Unbekannt'}
+                categoryName={purchase.categoryId ? categoryMap.get(purchase.categoryId)?.name : undefined}
+                selected={selectedIds.has(purchase.id)}
+                onToggleSelect={() => toggleSelect(purchase.id)}
                 onEdit={() => setEditingId(purchase.id)}
                 onDelete={() => handleDelete(purchase.id)}
               />
@@ -361,22 +507,37 @@ function PurchasesView({
 function PurchaseRow({
   purchase,
   paidByName,
+  categoryName,
+  selected,
+  onToggleSelect,
   onEdit,
   onDelete,
 }: {
   purchase: PurchaseWithAssignments
   paidByName: string
+  categoryName?: string
+  selected: boolean
+  onToggleSelect: () => void
   onEdit: () => void
   onDelete: () => void
 }) {
   return (
-    <div className="flex items-center justify-between rounded-lg border bg-card p-3 group">
-      <div className="flex-1 min-w-0">
-        <p className="font-medium truncate">{purchase.description}</p>
-        <p className="text-xs text-muted-foreground">
-          Bezahlt von {paidByName} &middot; {purchase.assignments.length} Person(en) &middot;{' '}
-          {new Date(purchase.purchasedAt || purchase.createdAt).toLocaleDateString('de-DE')}
-        </p>
+    <div className="flex items-center justify-between rounded-lg border bg-card p-3">
+      <div className="flex items-center gap-2 flex-1 min-w-0">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggleSelect}
+          className="rounded"
+        />
+        <div className="flex-1 min-w-0">
+          <p className="font-medium truncate">{purchase.description}</p>
+          <p className="text-xs text-muted-foreground">
+            Bezahlt von {paidByName} &middot; {purchase.assignments.length} Person(en)
+            {categoryName && <> &middot; {categoryName}</>}
+            {' '}&middot; {new Date(purchase.purchasedAt || purchase.createdAt).toLocaleDateString('de-DE')}
+          </p>
+        </div>
       </div>
       <div className="flex items-center gap-2">
         {purchase.receiptUrl && (
@@ -387,26 +548,26 @@ function PurchaseRow({
             className="text-xs text-muted-foreground hover:text-foreground"
             title="Kassenbon anzeigen"
           >
-            📎
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
           </a>
         )}
         <p className="font-semibold tabular-nums">{formatCents(purchase.amountCents)}</p>
-        <div className="hidden group-hover:flex gap-1">
-          <button
-            onClick={onEdit}
-            className="rounded p-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-            title="Bearbeiten"
-          >
-            ✏️
-          </button>
-          <button
-            onClick={onDelete}
-            className="rounded p-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-            title="Löschen"
-          >
-            🗑️
-          </button>
-        </div>
+        <button
+          onClick={onEdit}
+          className="rounded p-1.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+          title="Bearbeiten"
+          aria-label="Bearbeiten"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+        </button>
+        <button
+          onClick={onDelete}
+          className="rounded p-1.5 text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+          title="Löschen"
+          aria-label="Löschen"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+        </button>
       </div>
     </div>
   )
@@ -415,27 +576,61 @@ function PurchaseRow({
 function EditPurchaseRow({
   purchase,
   members,
+  categories: initialCategories,
+  groupId,
   onSave,
   onCancel,
 }: {
   purchase: PurchaseWithAssignments
   members: Member[]
-  onSave: (data: { description: string; amountCents: number; paidByUserId: string; purchasedAt?: string; assignedTo: string[] }) => void
+  categories: Category[]
+  groupId: string
+  onSave: (data: { description: string; amountCents: number; paidByUserId: string; categoryId?: string; tripId?: string; purchasedAt?: string; assignedTo: string[] }) => void
   onCancel: () => void
 }) {
   const [description, setDescription] = useState(purchase.description)
   const [amount, setAmount] = useState((purchase.amountCents / 100).toFixed(2).replace('.', ','))
   const [paidBy, setPaidBy] = useState(purchase.paidByUserId)
+  const [categoryId, setCategoryId] = useState(purchase.categoryId ?? '')
   const [purchasedAt, setPurchasedAt] = useState(purchase.purchasedAt || '')
   const [assignedTo, setAssignedTo] = useState(purchase.assignments.map((a) => a.userId))
   const [saving, setSaving] = useState(false)
+  const [categories, setCategories] = useState(initialCategories)
+  const [newCategoryName, setNewCategoryName] = useState('')
+  const [showNewCategory, setShowNewCategory] = useState(false)
+
+  const toggleAllAssigned = () => {
+    if (assignedTo.length === members.length) {
+      setAssignedTo([])
+    } else {
+      setAssignedTo(members.map((m) => m.id))
+    }
+  }
+
+  const handleCreateCategory = async () => {
+    if (!newCategoryName.trim()) return
+    const result = await api.createCategory(groupId, newCategoryName.trim())
+    const newCat: Category = { id: result.id, groupId, name: newCategoryName.trim() }
+    setCategories((prev) => [...prev, newCat])
+    setCategoryId(result.id)
+    setNewCategoryName('')
+    setShowNewCategory(false)
+  }
 
   const handleSave = async () => {
     const cents = Math.round(parseFloat(amount.replace(',', '.')) * 100)
     if (!description.trim() || isNaN(cents) || cents <= 0) return
     setSaving(true)
     try {
-      await onSave({ description: description.trim(), amountCents: cents, paidByUserId: paidBy, purchasedAt: purchasedAt || undefined, assignedTo })
+      await onSave({
+        description: description.trim(),
+        amountCents: cents,
+        paidByUserId: paidBy,
+        categoryId: categoryId || undefined,
+        tripId: purchase.tripId,
+        purchasedAt: purchasedAt || undefined,
+        assignedTo,
+      })
     } finally {
       setSaving(false)
     }
@@ -459,7 +654,7 @@ function EditPurchaseRow({
           placeholder="0,00"
         />
       </div>
-      <div className="flex gap-2 items-center">
+      <div className="flex gap-2 items-center flex-wrap">
         <select
           value={paidBy}
           onChange={(e) => setPaidBy(e.target.value)}
@@ -475,25 +670,57 @@ function EditPurchaseRow({
           onChange={(e) => setPurchasedAt(e.target.value)}
           className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
         />
-        <div className="flex-1 flex flex-wrap gap-1">
-          {members.map((m) => (
-            <label key={m.id} className="flex items-center gap-1 text-xs">
+        <div className="flex items-center gap-1">
+          <select
+            value={categoryId}
+            onChange={(e) => setCategoryId(e.target.value)}
+            className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Keine Kategorie</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          {!showNewCategory ? (
+            <button onClick={() => setShowNewCategory(true)} className="text-xs text-muted-foreground hover:text-foreground">+</button>
+          ) : (
+            <div className="flex items-center gap-1">
               <input
-                type="checkbox"
-                checked={assignedTo.includes(m.id)}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    setAssignedTo((prev) => [...prev, m.id])
-                  } else {
-                    setAssignedTo((prev) => prev.filter((id) => id !== m.id))
-                  }
-                }}
-                className="rounded"
+                type="text"
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCategory() }}
+                placeholder="Neue Kategorie"
+                className="w-28 rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-ring"
+                autoFocus
               />
-              {m.name.split(' ')[0]}
-            </label>
-          ))}
+              <button onClick={handleCreateCategory} className="text-xs text-primary hover:text-primary/80">OK</button>
+              <button onClick={() => setShowNewCategory(false)} className="text-xs text-muted-foreground">X</button>
+            </div>
+          )}
         </div>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <button onClick={toggleAllAssigned} className="text-xs text-muted-foreground hover:text-foreground underline">
+          {assignedTo.length === members.length ? 'Keine' : 'Alle'}
+        </button>
+        {members.map((m) => (
+          <label key={m.id} className="flex items-center gap-1 text-xs">
+            <input
+              type="checkbox"
+              checked={assignedTo.includes(m.id)}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  setAssignedTo((prev) => [...prev, m.id])
+                } else {
+                  setAssignedTo((prev) => prev.filter((id) => id !== m.id))
+                }
+              }}
+              className="rounded"
+            />
+            {m.name.split(' ')[0]}
+          </label>
+        ))}
       </div>
       <div className="flex gap-2 justify-end">
         <button
@@ -514,7 +741,7 @@ function EditPurchaseRow({
   )
 }
 
-function SettlementsView({ groupId, members, purchases }: { groupId: string; members: Member[]; purchases: PurchaseWithAssignments[] }) {
+function SettlementsView({ groupId, members, purchases, categories }: { groupId: string; members: Member[]; purchases: PurchaseWithAssignments[]; categories: Category[] }) {
   const [settlements, setSettlements] = useState<
     Array<{ fromUserId: string; toUserId: string; amountCents: number }>
   >([])
@@ -529,17 +756,23 @@ function SettlementsView({ groupId, members, purchases }: { groupId: string; mem
     }).catch(() => setLoading(false))
   }, [groupId])
 
-  // Calculate spending per person for pie chart
-  const spendingPerPerson = new Map<string, number>()
+  // Calculate consumption per person (assignment-based)
+  const consumptionPerPerson = new Map<string, number>()
   for (const p of purchases) {
-    const current = spendingPerPerson.get(p.paidByUserId) ?? 0
-    spendingPerPerson.set(p.paidByUserId, current + p.amountCents)
+    for (const a of p.assignments) {
+      if (a.customShareCents && a.customShareCents > 0) {
+        consumptionPerPerson.set(a.userId, (consumptionPerPerson.get(a.userId) ?? 0) + a.customShareCents)
+      } else {
+        const share = Math.round(p.amountCents / p.assignments.length)
+        consumptionPerPerson.set(a.userId, (consumptionPerPerson.get(a.userId) ?? 0) + share)
+      }
+    }
   }
-  const pieData = Array.from(spendingPerPerson.entries())
+
+  const pieData = Array.from(consumptionPerPerson.entries())
     .map(([userId, amount]) => ({
       name: memberMap.get(userId)?.name ?? 'Unbekannt',
       value: amount,
-      fill: `var(--color-${userId.slice(0, 8)})`,
     }))
     .sort((a, b) => b.value - a.value)
 
@@ -562,10 +795,10 @@ function SettlementsView({ groupId, members, purchases }: { groupId: string; mem
 
   return (
     <div className="space-y-6">
-      {/* Pie chart: spending per person */}
+      {/* Pie chart: consumption per person (assignment-based) */}
       {pieData.length > 0 && (
         <div className="rounded-lg border bg-card p-4">
-          <h3 className="mb-3 text-sm font-medium text-muted-foreground">Ausgaben pro Person</h3>
+          <h3 className="mb-3 text-sm font-medium text-muted-foreground">Verbrauch pro Person</h3>
           <ChartContainer config={chartConfig} className="mx-auto aspect-square max-h-[200px]">
             <PieChart>
               <Pie
@@ -596,6 +829,12 @@ function SettlementsView({ groupId, members, purchases }: { groupId: string; mem
 
       {/* Bar chart: spending over time (by day) */}
       {purchases.length > 0 && <SpendingOverTimeChart purchases={purchases} />}
+
+      {/* Net balance chart */}
+      {purchases.length > 0 && <NetBalanceChart members={members} purchases={purchases} consumptionPerPerson={consumptionPerPerson} />}
+
+      {/* Category chart */}
+      {purchases.length > 0 && <CategoryChart purchases={purchases} categories={categories} />}
 
       {/* Settlements */}
       {settlements.length === 0 ? (
@@ -661,6 +900,116 @@ function SpendingOverTimeChart({ purchases }: { purchases: PurchaseWithAssignmen
           <ChartTooltip content={<ChartTooltipContent formatter={(value) => formatCents(Number(value))} />} />
         </BarChart>
       </ChartContainer>
+    </div>
+  )
+}
+
+function NetBalanceChart({
+  members,
+  purchases,
+  consumptionPerPerson,
+}: {
+  members: Member[]
+  purchases: PurchaseWithAssignments[]
+  consumptionPerPerson: Map<string, number>
+}) {
+  // Calculate paid per person
+  const paidPerPerson = new Map<string, number>()
+  for (const p of purchases) {
+    paidPerPerson.set(p.paidByUserId, (paidPerPerson.get(p.paidByUserId) ?? 0) + p.amountCents)
+  }
+
+  const balanceData = members.map((m) => {
+    const paid = paidPerPerson.get(m.id) ?? 0
+    const consumed = consumptionPerPerson.get(m.id) ?? 0
+    const balance = paid - consumed
+    return {
+      name: m.name,
+      balance,
+      fill: balance >= 0 ? 'var(--chart-2)' : 'var(--chart-5)',
+    }
+  }).sort((a, b) => b.balance - a.balance)
+
+  const chartConfig: ChartConfig = {
+    balance: { label: 'Bilanz', color: 'var(--chart-2)' },
+  }
+
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <h3 className="mb-3 text-sm font-medium text-muted-foreground">Netto-Bilanz (Bezahlt - Verbraucht)</h3>
+      <ChartContainer config={chartConfig} className="h-[200px] w-full">
+        <BarChart data={balanceData} layout="vertical" accessibilityLayer>
+          <CartesianGrid horizontal={false} />
+          <XAxis type="number" tickLine={false} axisLine={false} tickFormatter={(v) => formatCents(v)} />
+          <YAxis type="category" dataKey="name" tickLine={false} axisLine={false} width={80} />
+          <ReferenceLine x={0} stroke="var(--border)" />
+          <Bar dataKey="balance" radius={4}>
+            {balanceData.map((entry, i) => (
+              <Cell key={i} fill={entry.fill} />
+            ))}
+          </Bar>
+          <ChartTooltip content={<ChartTooltipContent formatter={(value) => formatCents(Number(value))} />} />
+        </BarChart>
+      </ChartContainer>
+    </div>
+  )
+}
+
+function CategoryChart({ purchases, categories }: { purchases: PurchaseWithAssignments[]; categories: Category[] }) {
+  const categoryMap = new Map(categories.map((c) => [c.id, c]))
+
+  // Group by categoryId
+  const byCat = new Map<string, number>()
+  for (const p of purchases) {
+    const catId = p.categoryId ?? '__none__'
+    byCat.set(catId, (byCat.get(catId) ?? 0) + p.amountCents)
+  }
+
+  // Only show if more than 1 category
+  if (byCat.size <= 1) return null
+
+  const pieData = Array.from(byCat.entries()).map(([catId, amount]) => ({
+    name: catId === '__none__' ? 'Ohne Kategorie' : (categoryMap.get(catId)?.name ?? 'Unbekannt'),
+    value: amount,
+  })).sort((a, b) => b.value - a.value)
+
+  const COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)']
+
+  const chartConfig: ChartConfig = Object.fromEntries(
+    pieData.map((entry, i) => [
+      entry.name,
+      { label: entry.name, color: COLORS[i % COLORS.length] },
+    ])
+  )
+
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <h3 className="mb-3 text-sm font-medium text-muted-foreground">Ausgaben nach Kategorie</h3>
+      <ChartContainer config={chartConfig} className="mx-auto aspect-square max-h-[200px]">
+        <PieChart>
+          <Pie
+            data={pieData}
+            dataKey="value"
+            nameKey="name"
+            innerRadius={50}
+            outerRadius={80}
+            paddingAngle={2}
+          >
+            {pieData.map((_, i) => (
+              <Cell key={i} fill={COLORS[i % COLORS.length]} />
+            ))}
+          </Pie>
+          <ChartTooltip content={<ChartTooltipContent formatter={(value) => formatCents(Number(value))} />} />
+        </PieChart>
+      </ChartContainer>
+      <div className="mt-3 flex flex-wrap justify-center gap-3">
+        {pieData.map((entry, i) => (
+          <div key={entry.name} className="flex items-center gap-1.5 text-xs">
+            <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+            <span>{entry.name}: {formatCents(entry.value)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

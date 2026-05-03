@@ -14,20 +14,30 @@
     <script type="module" src="/src/main.tsx"></script>
     <script>
       if ('serviceWorker' in navigator) {
+        // Reload when new SW takes control (after skipWaiting)
+        let refreshing = false
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (refreshing) return
+          refreshing = true
+          window.location.reload()
+        })
+
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('/sw.js').then((reg) => {
+            // Check for updates every 60s
+            setInterval(() => reg.update(), 60000)
+
             reg.addEventListener('updatefound', () => {
               const newWorker = reg.installing
-              if (newWorker) {
-                newWorker.addEventListener('statechange', () => {
-                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                    if (confirm('Neue Version verfügbar. Jetzt aktualisieren?')) {
-                      newWorker.postMessage('skipWaiting')
-                      window.location.reload()
-                    }
+              if (!newWorker) return
+              newWorker.addEventListener('statechange', () => {
+                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  // New version ready — prompt user
+                  if (confirm('Neue Version verfügbar. Jetzt aktualisieren?')) {
+                    newWorker.postMessage('skipWaiting')
                   }
-                })
-              }
+                }
+              })
             })
           })
         })

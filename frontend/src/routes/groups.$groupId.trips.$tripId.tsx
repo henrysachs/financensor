@@ -156,12 +156,12 @@ function TripDetailPage() {
 
       {purchases.length === 0 ? (
         <div className="rounded-lg border border-dashed p-8 text-center">
-          <p className="text-muted-foreground">Noch keine Posten in diesem Einkauf.</p>
+          <p className="text-muted-foreground">Noch keine Posten in dieser Aktivität.</p>
         </div>
       ) : (
         <div className="space-y-1">
           {purchases.map((p) => (
-            <div key={p.id} className="flex items-center justify-between rounded-lg border bg-card p-3 group">
+            <div key={p.id} className="flex items-center justify-between rounded-lg border bg-card p-3">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">{p.description}</p>
                 <p className="text-xs text-muted-foreground">
@@ -172,9 +172,11 @@ function TripDetailPage() {
                 <p className="font-semibold tabular-nums text-sm">{formatCents(p.amountCents)}</p>
                 <button
                   onClick={() => handleDelete(p.id)}
-                  className="hidden group-hover:block rounded p-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  className="rounded p-1.5 text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                  title="Löschen"
+                  aria-label="Löschen"
                 >
-                  🗑️
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                 </button>
               </div>
             </div>

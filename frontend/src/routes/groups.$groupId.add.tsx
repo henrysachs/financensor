@@ -196,7 +196,7 @@ function BulkAddPurchases() {
 
       {/* Table */}
       <div className="space-y-2">
-        <div className="grid grid-cols-[1fr_100px_140px_140px_32px] gap-2 px-1 text-xs font-medium text-muted-foreground">
+        <div className="hidden md:grid md:grid-cols-[1fr_100px_140px_minmax(200px,1fr)_32px] gap-2 px-1 text-xs font-medium text-muted-foreground">
           <span>Beschreibung</span>
           <span>Betrag (€)</span>
           <span>Bezahlt von</span>
@@ -205,7 +205,7 @@ function BulkAddPurchases() {
         </div>
 
         {rows.map((row) => (
-          <div key={row.id} className="grid grid-cols-[1fr_100px_140px_140px_32px] gap-2">
+          <div key={row.id} className="grid grid-cols-[1fr_80px_32px] md:grid-cols-[1fr_100px_140px_minmax(200px,1fr)_32px] gap-2">
             <input
               ref={(el) => {
                 if (el) descriptionRefs.current.set(row.id, el)
@@ -229,7 +229,7 @@ function BulkAddPurchases() {
             <select
               value={row.paidBy}
               onChange={(e) => updateRow(row.id, { paidBy: e.target.value })}
-              className="rounded-md border bg-card px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              className="hidden md:block rounded-md border bg-card px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
             >
               {members.map((m) => (
                 <option key={m.id} value={m.id}>
@@ -300,66 +300,91 @@ function AssignmentSelect({
     }
   }
 
-  const label =
-    selected.length === members.length
-      ? 'Alle'
-      : selected.length === 0
-        ? 'Niemand'
-        : `${selected.length} Person(en)`
+  const allSelected = selected.length === members.length
+  const noneSelected = selected.length === 0
+
+  const label = allSelected
+    ? 'Alle'
+    : noneSelected
+      ? 'Niemand'
+      : `${selected.length} Person(en)`
 
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="w-full rounded-md border bg-card px-2 py-2 text-left text-sm outline-none focus:ring-2 focus:ring-ring"
-      >
-        {label}
-      </button>
-      {open && (
-        <div className="absolute left-0 top-full z-10 mt-1 w-48 rounded-md border bg-card p-1 shadow-lg">
-          <button
-            type="button"
-            onClick={() => {
-              onChange(members.map((m) => m.id))
-            }}
-            className="w-full rounded px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent"
-          >
-            Alle auswählen
-          </button>
-          <button
-            type="button"
-            onClick={() => onChange([])}
-            className="w-full rounded px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent"
-          >
-            Keine auswählen
-          </button>
-          <div className="my-1 border-t" />
-          {members.map((m) => (
-            <label
-              key={m.id}
-              className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent"
-            >
-              <input
-                type="checkbox"
-                checked={selected.includes(m.id)}
-                onChange={() => toggleMember(m.id)}
-                className="rounded"
-              />
-              {m.name}
-            </label>
-          ))}
-          <div className="mt-1 border-t pt-1">
+    <>
+      {/* Mobile: dropdown */}
+      <div className="relative md:hidden">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="w-full rounded-md border bg-card px-2 py-2 text-left text-sm outline-none focus:ring-2 focus:ring-ring"
+        >
+          {label}
+        </button>
+        {open && (
+          <div className="absolute left-0 top-full z-10 mt-1 w-48 rounded-md border bg-card p-1 shadow-lg">
             <button
               type="button"
-              onClick={() => setOpen(false)}
-              className="w-full rounded px-2 py-1 text-center text-xs font-medium hover:bg-accent"
+              onClick={() => onChange(members.map((m) => m.id))}
+              className="w-full rounded px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent"
             >
-              Fertig
+              Alle auswählen
             </button>
+            <button
+              type="button"
+              onClick={() => onChange([])}
+              className="w-full rounded px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent"
+            >
+              Keine auswählen
+            </button>
+            <div className="my-1 border-t" />
+            {members.map((m) => (
+              <label
+                key={m.id}
+                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.includes(m.id)}
+                  onChange={() => toggleMember(m.id)}
+                  className="rounded"
+                />
+                {m.name}
+              </label>
+            ))}
+            <div className="mt-1 border-t pt-1">
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="w-full rounded px-2 py-1 text-center text-xs font-medium hover:bg-accent"
+              >
+                Fertig
+              </button>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+
+      {/* Desktop: inline checkboxes */}
+      <div className="hidden md:flex md:items-center md:gap-2 md:flex-wrap">
+        <button
+          type="button"
+          onClick={() => onChange(allSelected ? [] : members.map((m) => m.id))}
+          className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+        >
+          {allSelected ? 'Keine' : 'Alle'}
+        </button>
+        {members.map((m) => (
+          <label key={m.id} className="flex items-center gap-1 text-xs cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={selected.includes(m.id)}
+              onChange={() => toggleMember(m.id)}
+              className="rounded"
+            />
+            {m.name.split(' ')[0]}
+          </label>
+        ))}
+      </div>
+    </>
   )
 }

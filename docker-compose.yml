@@ -35,7 +35,7 @@ services:
       - letsencrypt:/letsencrypt
 
   backend:
-    build: ./backend
+    image: ghcr.io/henrysachs/financensor-backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -67,7 +67,7 @@ services:
       start_period: 5s
 
   frontend:
-    build: ./frontend
+    image: ghcr.io/henrysachs/financensor-frontend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     logging:
       driver: json-file

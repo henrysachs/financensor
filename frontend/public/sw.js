@@ -1,10 +1,10 @@
-const CACHE_NAME = 'financensor-v1'
+const CACHE_NAME = 'financensor-v2'
 const STATIC_ASSETS = [
-  '/',
   '/manifest.json',
   '/favicon.svg',
   '/icon-192.png',
   '/icon-512.png',
+  '/offline.html',
 ]
 
 self.addEventListener('install', (event) => {
@@ -27,13 +27,27 @@ self.addEventListener('fetch', (event) => {
   const { request } = event
   const url = new URL(request.url)
 
-  // API requests: network first, no cache
+  // API requests: network only, no cache
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(fetch(request))
     return
   }
 
-  // Static assets: cache first, then network
+  // Never cache non-GET requests (e.g. telemetry POSTs)
+  if (request.method !== 'GET') {
+    event.respondWith(fetch(request))
+    return
+  }
+
+  // Navigation requests: network first, offline fallback
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request).catch(() => caches.match('/offline.html'))
+    )
+    return
+  }
+
+  // Static assets: stale-while-revalidate
   event.respondWith(
     caches.match(request).then((cached) => {
       const fetched = fetch(request).then((response) => {

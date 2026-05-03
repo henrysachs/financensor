@@ -2,6 +2,18 @@
 description = "Full deploy: sync, env, build & start on Hetzner"
 depends = ["deploy:sync", "deploy:env", "deploy:up"]
 
+[tasks.release-dry]
+description = "semantic-release dry run locally"
+run = "npm run release:dry"
+
+[tasks.release]
+description = "semantic-release locally"
+run = "npm run release"
+
+[tasks.release-deploy]
+description = "semantic-release locally and deploy latest tag"
+run = "npm run release && VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//') && bash ./deploy.sh v${VERSION}"
+
 [tasks."deploy:sync"]
 description = "Rsync project to server"
 run = """
