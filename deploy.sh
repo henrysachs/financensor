@@ -5,6 +5,15 @@ SERVER="hetzner"
 REMOTE_DIR="/opt/financensor"
 REGISTRY="ghcr.io/henrysachs"
 TAG="${1:-latest}"
+APP_VERSION="$(node -p "require('./frontend/package.json').version")"
+
+if [ "${TAG}" != "latest" ]; then
+  NORMALIZED_TAG="${TAG#v}"
+  if [ "${NORMALIZED_TAG}" != "${APP_VERSION}" ]; then
+    echo "error: IMAGE_TAG ${TAG} passt nicht zu frontend/package.json version ${APP_VERSION}"
+    exit 1
+  fi
+fi
 
 echo "==> Building images (linux/amd64)..."
 docker build --platform linux/amd64 -t ${REGISTRY}/financensor-backend:${TAG} ./backend
