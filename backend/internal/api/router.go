@@ -43,7 +43,7 @@ func NewRouter(db *sqlx.DB) http.Handler {
 	// Serve uploaded receipts (protected)
 	fileServer := http.FileServer(http.Dir(uploadsDir))
 	r.Group(func(r chi.Router) {
-		r.Use(auth.JWTMiddleware)
+		r.Use(auth.AuthMiddleware(db))
 		r.Handle("/uploads/*", http.StripPrefix("/uploads/", fileServer))
 	})
 
@@ -69,7 +69,7 @@ func NewRouter(db *sqlx.DB) http.Handler {
 
 		// Protected sub-group for all API endpoints
 		sub.Group(func(prot chi.Router) {
-			prot.Use(auth.JWTMiddleware)
+			prot.Use(auth.AuthMiddleware(db))
 
 			api := humachi.New(prot, apiConfig)
 
@@ -81,6 +81,7 @@ func NewRouter(db *sqlx.DB) http.Handler {
 			registerReceiptRoutes(api, db)
 			registerInviteRoutes(api, db)
 			registerTripRoutes(api, db)
+			registerAPIKeyRoutes(api, db)
 		})
 	})
 

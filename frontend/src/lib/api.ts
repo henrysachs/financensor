@@ -71,10 +71,19 @@ export const api = {
 
   // Members
   listMembers: (groupId: string) => fetchAPI<Member[]>(`/groups/${groupId}/members`),
+  updateMemberNickname: (groupId: string, userId: string, nickname: string) =>
+    fetchAPI<void>(`/groups/${groupId}/members/${userId}`, { method: 'PUT', body: { nickname } }),
   addMember: (groupId: string, userId: string) =>
     fetchAPI<void>(`/groups/${groupId}/members`, { method: 'POST', body: { userId } }),
   removeMember: (groupId: string, userId: string) =>
     fetchAPI<void>(`/groups/${groupId}/members/${userId}`, { method: 'DELETE' }),
+
+  // API keys
+  listAPIKeys: (groupId: string) => fetchAPI<APIKey[]>(`/groups/${groupId}/api-keys`),
+  createAPIKey: (groupId: string, data: { label: string; actingAsUserId: string }) =>
+    fetchAPI<{ id: string; label: string; actingAsUserId: string; createdByUserId: string; token: string; createdAt: string }>(`/groups/${groupId}/api-keys`, { method: 'POST', body: data }),
+  revokeAPIKey: (groupId: string, keyId: string) =>
+    fetchAPI<void>(`/groups/${groupId}/api-keys/${keyId}`, { method: 'DELETE' }),
 
   // Purchases
   listPurchases: (groupId: string) => fetchAPI<PurchaseWithAssignments[]>(`/groups/${groupId}/purchases`),
@@ -138,6 +147,8 @@ export type User = {
 export type Member = {
   id: string
   name: string
+  originalName: string
+  nickname?: string
   email?: string
   avatarUrl?: string
   isGhost: boolean
@@ -148,6 +159,17 @@ export type Group = {
   id: string
   name: string
   createdBy: string
+  createdAt: string
+}
+
+export type APIKey = {
+  id: string
+  groupId: string
+  label: string
+  actingAsUserId: string
+  createdByUserId: string
+  lastUsedAt?: string
+  revokedAt?: string
   createdAt: string
 }
 

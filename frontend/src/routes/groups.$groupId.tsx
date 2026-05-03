@@ -700,12 +700,12 @@ function EditPurchaseRow({
           )}
         </div>
       </div>
-      <div className="flex items-center gap-2 flex-wrap">
-        <button onClick={toggleAllAssigned} className="text-xs text-muted-foreground hover:text-foreground underline">
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        <button onClick={toggleAllAssigned} className="shrink-0 rounded-md border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
           {assignedTo.length === members.length ? 'Keine' : 'Alle'}
         </button>
         {members.map((m) => (
-          <label key={m.id} className="flex items-center gap-1 text-xs">
+          <label key={m.id} className="flex shrink-0 cursor-pointer select-none items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-accent">
             <input
               type="checkbox"
               checked={assignedTo.includes(m.id)}
@@ -716,7 +716,7 @@ function EditPurchaseRow({
                   setAssignedTo((prev) => prev.filter((id) => id !== m.id))
                 }
               }}
-              className="rounded"
+              className="h-4 w-4 rounded"
             />
             {m.name.split(' ')[0]}
           </label>
@@ -808,12 +808,25 @@ function SettlementsView({ groupId, members, purchases, categories }: { groupId:
                 innerRadius={50}
                 outerRadius={80}
                 paddingAngle={2}
+                labelLine={false}
+                label={({ name }) => typeof name === 'string' ? name : ''}
               >
                 {pieData.map((_, i) => (
                   <Cell key={i} fill={COLORS[i % COLORS.length]} />
                 ))}
               </Pie>
-              <ChartTooltip content={<ChartTooltipContent formatter={(value) => formatCents(Number(value))} />} />
+              <ChartTooltip
+                content={
+                  <ChartTooltipContent
+                    formatter={(value, name) => (
+                      <div className="flex min-w-0 items-center justify-between gap-3">
+                        <span className="truncate text-muted-foreground">{String(name)}</span>
+                        <span className="font-mono font-medium text-foreground tabular-nums">{formatCents(Number(value))}</span>
+                      </div>
+                    )}
+                  />
+                }
+              />
             </PieChart>
           </ChartContainer>
           <div className="mt-3 flex flex-wrap justify-center gap-3">

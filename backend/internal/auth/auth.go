@@ -3,12 +3,15 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -20,7 +23,20 @@ import (
 
 type contextKey string
 
-const UserIDKey contextKey = "userID"
+const (
+	UserIDKey       contextKey = "userID"
+	APIKeyIDKey     contextKey = "apiKeyID"
+	APIKeyGroupIDKey contextKey = "apiKeyGroupID"
+	IsAPIKeyKey     contextKey = "isAPIKey"
+	APIKeyPrefix               = "fin-token_"
+)
+
+type apiKeyAuthRow struct {
+	ID             string     `db:"id"`
+	GroupID        string     `db:"group_id"`
+	ActingAsUserID string     `db:"acting_as_user_id"`
+	RevokedAt      *time.Time `db:"revoked_at"`
+}
 
 var jwtSecret = []byte(getEnvOrDefault("JWT_SECRET", "dev-secret-change-in-production"))
 
@@ -97,29 +113,122 @@ func writeError(w http.ResponseWriter, status int, detail string) {
 	})
 }
 
-func JWTMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if len(authHeader) < 8 || authHeader[:7] != "Bearer " {
-			writeError(w, http.StatusUnauthorized, "missing or malformed authorization header")
-			return
-		}
+func GenerateAPIKey() (string, string, error) {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return "", "", err
+	}
+	token := APIKeyPrefix + base64.RawURLEncoding.EncodeToString(b)
+	return token, hashAPIKey(token), nil
+}
 
-		tokenStr := authHeader[7:]
-		claims, err := ParseToken(tokenStr)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "invalid or expired token")
-			return
-		}
+func hashAPIKey(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
 
-		ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
+func AuthMiddleware(db *sqlx.DB) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if len(authHeader) < 8 || authHeader[:7] != "Bearer " {
+				writeError(w, http.StatusUnauthorized, "missing or malformed authorization header")
+				return
+			}
+
+			tokenStr := authHeader[7:]
+			if strings.HasPrefix(tokenStr, APIKeyPrefix) {
+				var key apiKeyAuthRow
+				err := db.Get(&key, "SELECT id, group_id, acting_as_user_id, revoked_at FROM api_keys WHERE token_hash = ?", hashAPIKey(tokenStr))
+				if err != nil || key.RevokedAt != nil {
+					writeError(w, http.StatusUnauthorized, "invalid api key")
+					return
+				}
+
+				var memberCount int
+				err = db.Get(&memberCount, "SELECT COUNT(*) FROM group_members WHERE group_id = ? AND user_id = ?", key.GroupID, key.ActingAsUserID)
+				if err != nil || memberCount == 0 {
+					writeError(w, http.StatusUnauthorized, "api key user is no longer a group member")
+					return
+				}
+
+				if !apiKeyAllowedRequest(r, key.GroupID) {
+					writeError(w, http.StatusForbidden, "api key not allowed for this endpoint")
+					return
+				}
+
+				_, _ = db.Exec("UPDATE api_keys SET last_used_at = datetime('now') WHERE id = ?", key.ID)
+
+				ctx := context.WithValue(r.Context(), UserIDKey, key.ActingAsUserID)
+				ctx = context.WithValue(ctx, APIKeyIDKey, key.ID)
+				ctx = context.WithValue(ctx, APIKeyGroupIDKey, key.GroupID)
+				ctx = context.WithValue(ctx, IsAPIKeyKey, true)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			claims, err := ParseToken(tokenStr)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "invalid or expired token")
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }
 
 func GetUserID(ctx context.Context) string {
 	uid, _ := ctx.Value(UserIDKey).(string)
 	return uid
+}
+
+func IsAPIKey(ctx context.Context) bool {
+	isAPIKey, _ := ctx.Value(IsAPIKeyKey).(bool)
+	return isAPIKey
+}
+
+func GetAPIKeyGroupID(ctx context.Context) string {
+	groupID, _ := ctx.Value(APIKeyGroupIDKey).(string)
+	return groupID
+}
+
+func apiKeyAllowedRequest(r *http.Request, groupID string) bool {
+	if r.Method == http.MethodGet && r.URL.Path == "/api/v1/users/me" {
+		return true
+	}
+
+	groupPrefix := "/api/v1/groups/" + groupID
+	if r.URL.Path != groupPrefix && !strings.HasPrefix(r.URL.Path, groupPrefix+"/") {
+		return false
+	}
+
+	remainder := strings.TrimPrefix(r.URL.Path, groupPrefix)
+	switch {
+	case remainder == "" || remainder == "/":
+		return r.Method == http.MethodGet
+	case remainder == "/members":
+		return r.Method == http.MethodGet
+	case remainder == "/purchases":
+		return r.Method == http.MethodGet || r.Method == http.MethodPost
+	case remainder == "/purchases/bulk":
+		return r.Method == http.MethodPost
+	case strings.HasSuffix(remainder, "/receipt") && strings.HasPrefix(remainder, "/purchases/"):
+		return r.Method == http.MethodPost
+	case strings.HasPrefix(remainder, "/purchases/"):
+		return r.Method == http.MethodPut || r.Method == http.MethodDelete
+	case remainder == "/categories":
+		return r.Method == http.MethodGet || r.Method == http.MethodPost
+	case remainder == "/trips":
+		return r.Method == http.MethodGet || r.Method == http.MethodPost
+	case strings.HasPrefix(remainder, "/trips/"):
+		return r.Method == http.MethodGet || r.Method == http.MethodPut
+	case remainder == "/settlements":
+		return r.Method == http.MethodGet
+	default:
+		return false
+	}
 }
 
 // generateState creates a cryptographically random state string

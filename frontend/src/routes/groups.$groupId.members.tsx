@@ -1,5 +1,5 @@
 import { createFileRoute, redirect, Link } from '@tanstack/react-router'
-import { api, type Member, type Invite } from '@/lib/api'
+import { api, type Member, type Invite, type APIKey } from '@/lib/api'
 import { isAuthenticated, clearToken } from '@/lib/auth'
 import { useState, useEffect } from 'react'
 
@@ -32,6 +32,7 @@ function MembersPage() {
   const [showAddGhost, setShowAddGhost] = useState(false)
   const [ghostName, setGhostName] = useState('')
   const [adding, setAdding] = useState(false)
+  const [apiKeys, setAPIKeys] = useState<APIKey[]>([])
 
   const isCurrentUserAdmin = members.some(
     (m) => m.id === user.id && m.role === 'admin'
@@ -65,7 +66,18 @@ function MembersPage() {
     setMembers(updated)
   }
 
+  const handleNicknameSave = async (memberId: string, nickname: string) => {
+    await api.updateMemberNickname(group.id, memberId, nickname)
+    const updated = await api.listMembers(group.id)
+    setMembers(updated)
+  }
+
   const realMembers = members.filter((m) => !m.isGhost)
+
+  useEffect(() => {
+    if (!isCurrentUserAdmin) return
+    api.listAPIKeys(group.id).then(setAPIKeys).catch(() => {})
+  }, [group.id, isCurrentUserAdmin])
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
@@ -92,6 +104,7 @@ function MembersPage() {
             isSelf={member.id === user.id}
             onRemove={() => handleRemove(member.id)}
             onClaim={handleClaim}
+            onNicknameSave={handleNicknameSave}
             realMembers={realMembers}
           />
         ))}
@@ -137,7 +150,130 @@ function MembersPage() {
         </div>
       )}
 
+      {isCurrentUserAdmin && <APIKeySection groupId={group.id} members={members} apiKeys={apiKeys} onChange={setAPIKeys} />}
       {isCurrentUserAdmin && <InviteSection groupId={group.id} />}
+    </div>
+  )
+}
+
+function APIKeySection({
+  groupId,
+  members,
+  apiKeys,
+  onChange,
+}: {
+  groupId: string
+  members: Member[]
+  apiKeys: APIKey[]
+  onChange: (keys: APIKey[]) => void
+}) {
+  const [label, setLabel] = useState('')
+  const [actingAsUserId, setActingAsUserId] = useState(members[0]?.id ?? '')
+  const [creating, setCreating] = useState(false)
+  const [newToken, setNewToken] = useState<string | null>(null)
+  const memberMap = new Map(members.map((member) => [member.id, member]))
+
+  const handleCreate = async () => {
+    if (!label.trim() || !actingAsUserId) return
+    setCreating(true)
+    try {
+      const created = await api.createAPIKey(groupId, { label: label.trim(), actingAsUserId })
+      onChange([{ id: created.id, groupId, label: created.label, actingAsUserId: created.actingAsUserId, createdByUserId: created.createdByUserId, createdAt: created.createdAt }, ...apiKeys])
+      setNewToken(created.token)
+      setLabel('')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const handleRevoke = async (keyId: string) => {
+    if (!confirm('API-Key wirklich widerrufen?')) return
+    await api.revokeAPIKey(groupId, keyId)
+    onChange(apiKeys.map((key) => key.id === keyId ? { ...key, revokedAt: new Date().toISOString() } : key))
+  }
+
+  return (
+    <div className="mt-8 border-t pt-6">
+      <h2 className="text-sm font-medium">API-Keys</h2>
+      <p className="mt-1 text-xs text-muted-foreground">Fuer Agenten, Skripte und Automationen. Token wird nur einmal angezeigt.</p>
+      <p className="mt-1 break-all text-[11px] text-muted-foreground">Header: <code>Authorization: Bearer fin-token_...</code></p>
+
+      <div className="mt-3 flex flex-wrap gap-2 rounded-lg border bg-card p-3">
+        <input
+          type="text"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="z.B. Henry Agent"
+          className="flex-1 rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+        />
+        <select
+          value={actingAsUserId}
+          onChange={(e) => setActingAsUserId(e.target.value)}
+          className="rounded-md border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+        >
+          {members.map((member) => (
+            <option key={member.id} value={member.id}>{member.name}</option>
+          ))}
+        </select>
+        <button
+          onClick={handleCreate}
+          disabled={creating || !label.trim() || !actingAsUserId}
+          className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          {creating ? '...' : '+ API-Key'}
+        </button>
+      </div>
+
+      {newToken && (
+        <div className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
+          <p className="text-xs font-medium">Neuer Token</p>
+          <p className="mt-1 break-all rounded bg-background px-2 py-2 font-mono text-xs">{newToken}</p>
+          <div className="mt-2 flex gap-2">
+            <button
+              onClick={() => navigator.clipboard.writeText(newToken)}
+              className="rounded-md bg-secondary px-2 py-1 text-xs text-secondary-foreground hover:bg-accent"
+            >
+              Kopieren
+            </button>
+            <button
+              onClick={() => setNewToken(null)}
+              className="rounded-md bg-secondary px-2 py-1 text-xs text-secondary-foreground hover:bg-accent"
+            >
+              Ausblenden
+            </button>
+          </div>
+        </div>
+      )}
+
+      {apiKeys.length === 0 ? (
+        <p className="mt-3 text-xs text-muted-foreground">Noch keine API-Keys erstellt.</p>
+      ) : (
+        <div className="mt-3 space-y-2">
+          {apiKeys.map((key) => (
+            <div key={key.id} className="rounded-md border bg-card p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{key.label}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Handelt als {memberMap.get(key.actingAsUserId)?.name ?? 'Unbekannt'}
+                    {' · '}erstellt {new Date(key.createdAt).toLocaleString('de-DE')}
+                    {key.lastUsedAt && ` · zuletzt ${new Date(key.lastUsedAt).toLocaleString('de-DE')}`}
+                    {key.revokedAt && ' · widerrufen'}
+                  </p>
+                </div>
+                {!key.revokedAt && (
+                  <button
+                    onClick={() => handleRevoke(key.id)}
+                    className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  >
+                    Widerrufen
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -232,6 +368,7 @@ function MemberRow({
   isSelf,
   onRemove,
   onClaim,
+  onNicknameSave,
   realMembers,
 }: {
   member: Member
@@ -239,10 +376,24 @@ function MemberRow({
   isSelf: boolean
   onRemove: () => void
   onClaim: (ghostId: string, claimerId: string) => void
+  onNicknameSave: (memberId: string, nickname: string) => Promise<void>
   realMembers: Member[]
 }) {
   const [showClaim, setShowClaim] = useState(false)
   const [claimTarget, setClaimTarget] = useState('')
+  const [editingNickname, setEditingNickname] = useState(false)
+  const [nickname, setNickname] = useState(member.nickname ?? '')
+  const [savingNickname, setSavingNickname] = useState(false)
+
+  const handleSaveNickname = async () => {
+    setSavingNickname(true)
+    try {
+      await onNicknameSave(member.id, nickname)
+      setEditingNickname(false)
+    } finally {
+      setSavingNickname(false)
+    }
+  }
 
   return (
     <div className="rounded-lg border bg-card p-3">
@@ -264,6 +415,9 @@ function MemberRow({
               {member.name}
               {isSelf && <span className="ml-1 text-muted-foreground">(du)</span>}
             </p>
+            {member.nickname && member.originalName !== member.name && (
+              <p className="text-xs text-muted-foreground">Google-Name: {member.originalName}</p>
+            )}
             <p className="text-xs text-muted-foreground">
               {member.role === 'admin' ? 'Admin' : 'Mitglied'}
               {member.isGhost && ' · Kein Account'}
@@ -271,8 +425,14 @@ function MemberRow({
           </div>
         </div>
 
-        {isAdmin && !isSelf && (
+        {(isAdmin || isSelf) && (
           <div className="flex gap-1">
+            <button
+              onClick={() => setEditingNickname((prev) => !prev)}
+              className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              Spitzname
+            </button>
             {member.isGhost && (
               <button
                 onClick={() => setShowClaim(!showClaim)}
@@ -281,15 +441,45 @@ function MemberRow({
                 Zuweisen
               </button>
             )}
-            <button
-              onClick={onRemove}
-              className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-            >
-              Entfernen
-            </button>
+            {isAdmin && !isSelf && (
+              <button
+                onClick={onRemove}
+                className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              >
+                Entfernen
+              </button>
+            )}
           </div>
         )}
       </div>
+
+      {editingNickname && (
+        <div className="mt-2 flex gap-2 border-t pt-2">
+          <input
+            type="text"
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
+            placeholder={member.originalName}
+            className="flex-1 rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-ring"
+          />
+          <button
+            onClick={handleSaveNickname}
+            disabled={savingNickname}
+            className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {savingNickname ? '...' : 'Speichern'}
+          </button>
+          <button
+            onClick={() => {
+              setNickname(member.nickname ?? '')
+              setEditingNickname(false)
+            }}
+            className="rounded-md bg-secondary px-2 py-1 text-xs text-secondary-foreground hover:bg-accent"
+          >
+            Abbrechen
+          </button>
+        </div>
+      )}
 
       {showClaim && (
         <div className="mt-2 flex gap-2 border-t pt-2">

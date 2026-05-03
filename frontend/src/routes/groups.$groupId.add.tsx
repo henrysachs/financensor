@@ -1,5 +1,5 @@
 import { createFileRoute, redirect, Link, useRouter } from '@tanstack/react-router'
-import { api, type Member } from '@/lib/api'
+import { api, type Member, type Category } from '@/lib/api'
 import { isAuthenticated, clearToken } from '@/lib/auth'
 import { useState, useRef, useCallback } from 'react'
 
@@ -16,12 +16,13 @@ export const Route = createFileRoute('/groups/$groupId/add')({
     }
   },
   loader: async ({ params }) => {
-    const [group, members, user] = await Promise.all([
+    const [group, members, categories, user] = await Promise.all([
       api.getGroup(params.groupId),
       api.listMembers(params.groupId),
+      api.listCategories(params.groupId),
       api.getMe(),
     ])
-    return { group, members, user }
+    return { group, members, categories, user }
   },
   component: BulkAddPurchases,
 })
@@ -31,32 +32,38 @@ type PurchaseRow = {
   description: string
   amount: string
   paidBy: string
+  categoryId: string
   assignedTo: string[]
 }
 
-function createEmptyRow(defaultPaidBy: string, defaultAssigned: string[]): PurchaseRow {
+function createEmptyRow(defaultPaidBy: string, defaultCategoryId: string, defaultAssigned: string[]): PurchaseRow {
   return {
     id: crypto.randomUUID(),
     description: '',
     amount: '',
     paidBy: defaultPaidBy,
+    categoryId: defaultCategoryId,
     assignedTo: [...defaultAssigned],
   }
 }
 
 function BulkAddPurchases() {
-  const { group, members, user } = Route.useLoaderData()
+  const { group, members, categories: initialCategories, user } = Route.useLoaderData()
   const router = useRouter()
   const defaultAssigned = members.map((m) => m.id)
 
+  const [categories, setCategories] = useState(initialCategories)
   const [rows, setRows] = useState<PurchaseRow[]>(() => [
-    createEmptyRow(user.id, defaultAssigned),
-    createEmptyRow(user.id, defaultAssigned),
-    createEmptyRow(user.id, defaultAssigned),
+    createEmptyRow(user.id, '', defaultAssigned),
+    createEmptyRow(user.id, '', defaultAssigned),
+    createEmptyRow(user.id, '', defaultAssigned),
   ])
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [defaultPaidBy, setDefaultPaidBy] = useState(user.id)
+  const [defaultCategoryId, setDefaultCategoryId] = useState('')
+  const [showNewCategory, setShowNewCategory] = useState(false)
+  const [newCategoryName, setNewCategoryName] = useState('')
   const descriptionRefs = useRef<Map<string, HTMLInputElement>>(new Map())
 
   const updateRow = useCallback((id: string, updates: Partial<PurchaseRow>) => {
@@ -64,13 +71,13 @@ function BulkAddPurchases() {
   }, [])
 
   const addRow = useCallback(() => {
-    const newRow = createEmptyRow(defaultPaidBy, defaultAssigned)
+    const newRow = createEmptyRow(defaultPaidBy, defaultCategoryId, defaultAssigned)
     setRows((prev) => [...prev, newRow])
     setTimeout(() => {
       const input = descriptionRefs.current.get(newRow.id)
       input?.focus()
     }, 0)
-  }, [defaultPaidBy, defaultAssigned])
+  }, [defaultCategoryId, defaultPaidBy, defaultAssigned])
 
   const removeRow = useCallback((id: string) => {
     setRows((prev) => {
@@ -97,10 +104,30 @@ function BulkAddPurchases() {
 
   const handleDefaultPaidByChange = (newPaidBy: string) => {
     setDefaultPaidBy(newPaidBy)
-    // Update all rows that still have the old default
     setRows((prev) =>
       prev.map((r) => (r.paidBy === defaultPaidBy ? { ...r, paidBy: newPaidBy } : r))
     )
+  }
+
+  const handleDefaultCategoryChange = (newCategoryId: string) => {
+    setDefaultCategoryId(newCategoryId)
+    setRows((prev) =>
+      prev.map((r) => (r.categoryId === defaultCategoryId ? { ...r, categoryId: newCategoryId } : r))
+    )
+  }
+
+  const handleCreateCategory = async () => {
+    if (!newCategoryName.trim()) return
+    const name = newCategoryName.trim()
+    const result = await api.createCategory(group.id, name)
+    const newCategory: Category = { id: result.id, groupId: group.id, name }
+    setCategories((prev) => [...prev, newCategory])
+    setNewCategoryName('')
+    setShowNewCategory(false)
+    setRows((prev) =>
+      prev.map((r) => (r.categoryId === defaultCategoryId ? { ...r, categoryId: result.id } : r))
+    )
+    setDefaultCategoryId(result.id)
   }
 
   const handleSubmit = async () => {
@@ -113,6 +140,7 @@ function BulkAddPurchases() {
         description: r.description.trim(),
         amountCents: Math.round(parseFloat(r.amount.replace(',', '.')) * 100),
         paidByUserId: r.paidBy,
+        categoryId: r.categoryId || undefined,
         assignedTo: r.assignedTo.length > 0 ? r.assignedTo : defaultAssigned,
       }))
 
@@ -176,7 +204,7 @@ function BulkAddPurchases() {
       </header>
 
       {/* Default paid-by selector */}
-      <div className="mb-4 flex items-center gap-3 rounded-lg border bg-card p-3">
+      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border bg-card p-3">
         <label className="text-sm font-medium">Bezahlt von (Standard):</label>
         <select
           value={defaultPaidBy}
@@ -192,20 +220,70 @@ function BulkAddPurchases() {
         <span className="text-xs text-muted-foreground">
           Gilt für alle neuen Zeilen
         </span>
+        <label className="text-sm font-medium md:ml-4">Kategorie (Standard):</label>
+        <select
+          value={defaultCategoryId}
+          onChange={(e) => handleDefaultCategoryChange(e.target.value)}
+          className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="">Keine Kategorie</option>
+          {categories.map((category) => (
+            <option key={category.id} value={category.id}>
+              {category.name}
+            </option>
+          ))}
+        </select>
+        {!showNewCategory ? (
+          <button
+            type="button"
+            onClick={() => setShowNewCategory(true)}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            + Kategorie
+          </button>
+        ) : (
+          <div className="flex items-center gap-1">
+            <input
+              type="text"
+              value={newCategoryName}
+              onChange={(e) => setNewCategoryName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCreateCategory()
+              }}
+              placeholder="z.B. Essen"
+              className="w-32 rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-ring"
+              autoFocus
+            />
+            <button type="button" onClick={handleCreateCategory} className="text-xs text-primary hover:text-primary/80">
+              OK
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowNewCategory(false)
+                setNewCategoryName('')
+              }}
+              className="text-xs text-muted-foreground"
+            >
+              X
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Table */}
       <div className="space-y-2">
-        <div className="hidden md:grid md:grid-cols-[1fr_100px_140px_minmax(200px,1fr)_32px] gap-2 px-1 text-xs font-medium text-muted-foreground">
+        <div className="hidden md:grid md:grid-cols-[1fr_100px_140px_160px_minmax(200px,1fr)_32px] gap-2 px-1 text-xs font-medium text-muted-foreground">
           <span>Beschreibung</span>
           <span>Betrag (€)</span>
           <span>Bezahlt von</span>
+          <span>Kategorie</span>
           <span>Aufgeteilt auf</span>
           <span></span>
         </div>
 
         {rows.map((row) => (
-          <div key={row.id} className="grid grid-cols-[1fr_80px_32px] md:grid-cols-[1fr_100px_140px_minmax(200px,1fr)_32px] gap-2">
+          <div key={row.id} className="grid gap-2 rounded-lg border bg-card p-3 md:grid-cols-[1fr_100px_140px_160px_minmax(200px,1fr)_32px] md:border-0 md:bg-transparent md:p-0">
             <input
               ref={(el) => {
                 if (el) descriptionRefs.current.set(row.id, el)
@@ -224,16 +302,28 @@ function BulkAddPurchases() {
               value={row.amount}
               onChange={(e) => updateRow(row.id, { amount: e.target.value })}
               onKeyDown={(e) => handleKeyDown(e, row.id, 'amount')}
-              className="rounded-md border bg-card px-3 py-2 text-sm tabular-nums outline-none focus:ring-2 focus:ring-ring"
+              className="rounded-md border bg-background px-3 py-2 text-sm tabular-nums outline-none focus:ring-2 focus:ring-ring"
             />
             <select
               value={row.paidBy}
               onChange={(e) => updateRow(row.id, { paidBy: e.target.value })}
-              className="hidden md:block rounded-md border bg-card px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              className="rounded-md border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
             >
               {members.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={row.categoryId}
+              onChange={(e) => updateRow(row.id, { categoryId: e.target.value })}
+              className="rounded-md border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="">Keine Kategorie</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
                 </option>
               ))}
             </select>
@@ -365,21 +455,21 @@ function AssignmentSelect({
       </div>
 
       {/* Desktop: inline checkboxes */}
-      <div className="hidden md:flex md:items-center md:gap-2 md:flex-wrap">
+      <div className="hidden md:flex md:items-center md:gap-2 md:flex-nowrap md:overflow-x-auto md:pb-1">
         <button
           type="button"
           onClick={() => onChange(allSelected ? [] : members.map((m) => m.id))}
-          className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          className="shrink-0 rounded-md border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
         >
           {allSelected ? 'Keine' : 'Alle'}
         </button>
         {members.map((m) => (
-          <label key={m.id} className="flex items-center gap-1 text-xs cursor-pointer select-none">
+          <label key={m.id} className="flex shrink-0 cursor-pointer select-none items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-accent">
             <input
               type="checkbox"
               checked={selected.includes(m.id)}
               onChange={() => toggleMember(m.id)}
-              className="rounded"
+              className="h-4 w-4 rounded"
             />
             {m.name.split(' ')[0]}
           </label>

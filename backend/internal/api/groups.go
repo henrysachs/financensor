@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
@@ -63,13 +64,23 @@ type RemoveMemberInput struct {
 	UserID  string `path:"userID" doc:"User ID to remove"`
 }
 
+type UpdateMemberNicknameInput struct {
+	GroupID string `path:"groupID" doc:"Group ID"`
+	UserID  string `path:"userID" doc:"User ID to update"`
+	Body    struct {
+		Nickname string `json:"nickname" doc:"Nickname for this group, empty clears it"`
+	}
+}
+
 type MemberResponse struct {
-	ID        string  `json:"id" db:"id"`
-	Name      string  `json:"name" db:"name"`
-	Email     *string `json:"email,omitempty" db:"email"`
-	AvatarURL *string `json:"avatarUrl,omitempty" db:"avatar_url"`
-	IsGhost   bool    `json:"isGhost" db:"is_ghost"`
-	Role      string  `json:"role" db:"role"`
+	ID           string  `json:"id" db:"id"`
+	Name         string  `json:"name" db:"name"`
+	OriginalName string  `json:"originalName" db:"original_name"`
+	Nickname     *string `json:"nickname,omitempty" db:"nickname"`
+	Email        *string `json:"email,omitempty" db:"email"`
+	AvatarURL    *string `json:"avatarUrl,omitempty" db:"avatar_url"`
+	IsGhost      bool    `json:"isGhost" db:"is_ghost"`
+	Role         string  `json:"role" db:"role"`
 }
 
 type ListMembersOutput struct {
@@ -231,11 +242,18 @@ func registerGroupRoutes(api huma.API, db *sqlx.DB) {
 
 		var members []MemberResponse
 		err := db.Select(&members, `
-			SELECT u.id, u.name, u.email, u.avatar_url, u.is_ghost, gm.role
+			SELECT u.id,
+			       COALESCE(NULLIF(gm.nickname, ''), u.name) AS name,
+			       u.name AS original_name,
+			       gm.nickname,
+			       u.email,
+			       u.avatar_url,
+			       u.is_ghost,
+			       gm.role
 			FROM users u
 			JOIN group_members gm ON u.id = gm.user_id
 			WHERE gm.group_id = ?
-			ORDER BY gm.role ASC, u.name ASC
+			ORDER BY gm.role ASC, COALESCE(NULLIF(gm.nickname, ''), u.name) ASC
 		`, input.GroupID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError(fmt.Sprintf("failed to list members: %v", err))
@@ -246,6 +264,38 @@ func registerGroupRoutes(api huma.API, db *sqlx.DB) {
 		}
 
 		return &ListMembersOutput{Body: members}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "update-member-nickname",
+		Method:      http.MethodPut,
+		Path:        "/groups/{groupID}/members/{userID}",
+		Summary:     "Update nickname for a group member",
+		Tags:        []string{"Groups"},
+	}, func(ctx context.Context, input *UpdateMemberNicknameInput) (*StatusOutput, error) {
+		userID := auth.GetUserID(ctx)
+
+		if userID != input.UserID && !isAdmin(db, input.GroupID, userID) {
+			return nil, huma.Error403Forbidden("only self or admin")
+		}
+		if !isMember(db, input.GroupID, input.UserID) {
+			return nil, huma.Error404NotFound("member not found")
+		}
+
+		nickname := strings.TrimSpace(input.Body.Nickname)
+		_, err := db.Exec(
+			"UPDATE group_members SET nickname = NULLIF(?, '') WHERE group_id = ? AND user_id = ?",
+			nickname,
+			input.GroupID,
+			input.UserID,
+		)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to update nickname", err)
+		}
+
+		resp := &StatusOutput{}
+		resp.Body.Status = "updated"
+		return resp, nil
 	})
 
 	huma.Register(api, huma.Operation{

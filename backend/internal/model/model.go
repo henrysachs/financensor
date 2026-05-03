@@ -27,9 +27,10 @@ type Group struct {
 }
 
 type GroupMember struct {
-	GroupID string `db:"group_id" json:"groupId"`
-	UserID  string `db:"user_id" json:"userId"`
-	Role    Role   `db:"role" json:"role"`
+	GroupID  string  `db:"group_id" json:"groupId"`
+	UserID   string  `db:"user_id" json:"userId"`
+	Nickname *string `db:"nickname" json:"nickname,omitempty"`
+	Role     Role    `db:"role" json:"role"`
 }
 
 type Category struct {
@@ -77,4 +78,16 @@ type Settlement struct {
 	AmountCents int64 `db:"amount_cents" json:"amountCents"`
 	IsPaid     bool   `db:"is_paid" json:"isPaid"`
 	CreatedAt  time.Time `db:"created_at" json:"createdAt"`
+}
+
+type APIKey struct {
+	ID              string     `db:"id" json:"id"`
+	GroupID         string     `db:"group_id" json:"groupId"`
+	Label           string     `db:"label" json:"label"`
+	TokenHash       string     `db:"token_hash" json:"-"`
+	ActingAsUserID  string     `db:"acting_as_user_id" json:"actingAsUserId"`
+	CreatedByUserID string     `db:"created_by_user_id" json:"createdByUserId"`
+	LastUsedAt      *time.Time `db:"last_used_at" json:"lastUsedAt,omitempty"`
+	RevokedAt       *time.Time `db:"revoked_at" json:"revokedAt,omitempty"`
+	CreatedAt       time.Time  `db:"created_at" json:"createdAt"`
 }

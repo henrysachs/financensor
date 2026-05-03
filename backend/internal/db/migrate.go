@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS groups (
 CREATE TABLE IF NOT EXISTS group_members (
     group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     user_id TEXT NOT NULL REFERENCES users(id),
+    nickname TEXT,
     role TEXT NOT NULL CHECK(role IN ('admin', 'member')),
     PRIMARY KEY (group_id, user_id)
 );
@@ -98,6 +99,21 @@ CREATE TABLE IF NOT EXISTS trips (
 );
 
 CREATE INDEX IF NOT EXISTS idx_trips_group ON trips(group_id);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    acting_as_user_id TEXT NOT NULL REFERENCES users(id),
+    created_by_user_id TEXT NOT NULL REFERENCES users(id),
+    last_used_at DATETIME,
+    revoked_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_group ON api_keys(group_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(token_hash);
 `
 
 func Migrate(db *sqlx.DB) error {
@@ -109,6 +125,7 @@ func Migrate(db *sqlx.DB) error {
 	// Incremental migrations for existing DBs
 	db.Exec("ALTER TABLE purchases ADD COLUMN purchased_at DATE NOT NULL DEFAULT (date('now'))")
 	db.Exec("ALTER TABLE purchases ADD COLUMN trip_id TEXT REFERENCES trips(id) ON DELETE SET NULL")
+	db.Exec("ALTER TABLE group_members ADD COLUMN nickname TEXT")
 
 	return nil
 }
