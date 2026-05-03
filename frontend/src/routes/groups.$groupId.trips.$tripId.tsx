@@ -30,6 +30,9 @@ function TripDetailPage() {
   const [localPurchases, setLocalPurchases] = useState(purchases)
   const [categories, setCategories] = useState(initialCategories)
   const [showAdd, setShowAdd] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortBy, setSortBy] = useState<'date' | 'alpha' | 'amount'>('alpha')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [rows, setRows] = useState<Array<{ id: string; description: string; amount: string; categoryId: string }>>([
     createRow(), createRow(), createRow(),
   ])
@@ -245,7 +248,42 @@ function TripDetailPage() {
         </div>
       ) : (
         <div className="space-y-1">
-          {localPurchases.map((p) =>
+          {/* Search + sort */}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              placeholder="Suche..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-40 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+            />
+            <select
+              value={`${sortBy}-${sortDir}`}
+              onChange={(e) => {
+                const [by, dir] = e.target.value.split('-') as ['date' | 'alpha' | 'amount', 'asc' | 'desc']
+                setSortBy(by)
+                setSortDir(dir)
+              }}
+              className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="alpha-asc">A → Z</option>
+              <option value="alpha-desc">Z → A</option>
+              <option value="amount-desc">Betrag absteigend</option>
+              <option value="amount-asc">Betrag aufsteigend</option>
+              <option value="date-desc">Neueste zuerst</option>
+              <option value="date-asc">Älteste zuerst</option>
+            </select>
+          </div>
+          {localPurchases
+            .filter((p) => !searchQuery || p.description.toLowerCase().includes(searchQuery.toLowerCase()))
+            .sort((a, b) => {
+              let cmp = 0
+              if (sortBy === 'date') cmp = a.purchasedAt.localeCompare(b.purchasedAt)
+              else if (sortBy === 'alpha') cmp = a.description.localeCompare(b.description, 'de')
+              else if (sortBy === 'amount') cmp = a.amountCents - b.amountCents
+              return sortDir === 'asc' ? cmp : -cmp
+            })
+            .map((p) =>
             editingId === p.id ? (
                <EditTripPurchaseRow
                  key={p.id}

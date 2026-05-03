@@ -196,72 +196,106 @@ function BulkAddPurchases() {
         </p>
       </header>
 
-      {/* Default paid-by selector */}
-      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border bg-card p-3">
-        <label className="text-sm font-medium">Bezahlt von (Standard):</label>
-        <select
-          value={defaultPaidBy}
-          onChange={(e) => handleDefaultPaidByChange(e.target.value)}
-          className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-        >
-          {members.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name}{m.isGhost ? ' (kein Account)' : ''}
-            </option>
-          ))}
-        </select>
-        <span className="text-xs text-muted-foreground">
-          Gilt für alle neuen Zeilen
-        </span>
-        <label className="text-sm font-medium md:ml-4">Kategorie (Standard):</label>
-        <select
-          value={defaultCategoryId}
-          onChange={(e) => handleDefaultCategoryChange(e.target.value)}
-          className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-        >
-          <option value="">Keine Kategorie</option>
-          {categories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {category.name}
-            </option>
-          ))}
-        </select>
-        {!showNewCategory ? (
-          <button
-            type="button"
-            onClick={() => setShowNewCategory(true)}
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
-            + Kategorie
-          </button>
-        ) : (
-          <div className="flex items-center gap-1">
-            <input
-              type="text"
-              value={newCategoryName}
-              onChange={(e) => setNewCategoryName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCreateCategory()
-              }}
-              placeholder="z.B. Essen"
-              className="w-32 rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-ring"
-              autoFocus
-            />
-            <button type="button" onClick={handleCreateCategory} className="text-xs text-primary hover:text-primary/80">
-              OK
+      {/* Default settings */}
+      <div className="mb-4 space-y-3 rounded-lg border bg-card p-3">
+        {/* Paid by */}
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-sm font-medium">Bezahlt von:</label>
+          <div className="flex flex-wrap gap-1">
+            {members.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => handleDefaultPaidByChange(m.id)}
+                className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${defaultPaidBy === m.id ? 'border-primary bg-primary/10 font-medium text-primary' : 'hover:bg-accent'}`}
+              >
+                {m.name.split(' ')[0]}{m.isGhost ? ' *' : ''}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Category */}
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-sm font-medium">Kategorie:</label>
+          <div className="flex flex-wrap gap-1">
+            <button
+              type="button"
+              onClick={() => handleDefaultCategoryChange('')}
+              className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${defaultCategoryId === '' ? 'border-primary bg-primary/10 font-medium text-primary' : 'hover:bg-accent'}`}
+            >
+              Keine
             </button>
+            {categories.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => handleDefaultCategoryChange(c.id)}
+                className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${defaultCategoryId === c.id ? 'border-primary bg-primary/10 font-medium text-primary' : 'hover:bg-accent'}`}
+              >
+                {c.name}
+              </button>
+            ))}
+            {!showNewCategory ? (
+              <button
+                type="button"
+                onClick={() => setShowNewCategory(true)}
+                className="rounded-md border border-dashed px-2.5 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                +
+              </button>
+            ) : (
+              <div className="flex items-center gap-1">
+                <input
+                  type="text"
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleCreateCategory()
+                  }}
+                  placeholder="z.B. Essen"
+                  className="w-24 rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-ring"
+                  autoFocus
+                />
+                <button type="button" onClick={handleCreateCategory} className="text-xs text-primary hover:text-primary/80">OK</button>
+                <button type="button" onClick={() => { setShowNewCategory(false); setNewCategoryName('') }} className="text-xs text-muted-foreground">X</button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Assignment */}
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-sm font-medium">Aufgeteilt auf:</label>
+          <div className="flex flex-wrap gap-1">
             <button
               type="button"
               onClick={() => {
-                setShowNewCategory(false)
-                setNewCategoryName('')
+                const allIds = members.map((m) => m.id)
+                setRows((prev) => prev.map((r) => ({ ...r, assignedTo: allIds })))
               }}
-              className="text-xs text-muted-foreground"
+              className="rounded-md border px-2.5 py-1 text-xs hover:bg-accent"
             >
-              X
+              Alle
             </button>
+            {members.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => {
+                  setRows((prev) => prev.map((r) => {
+                    const has = r.assignedTo.includes(m.id)
+                    return { ...r, assignedTo: has ? r.assignedTo.filter((id) => id !== m.id) : [...r.assignedTo, m.id] }
+                  }))
+                }}
+                className="rounded-md border px-2.5 py-1 text-xs hover:bg-accent"
+              >
+                {m.name.split(' ')[0]}
+              </button>
+            ))}
           </div>
-        )}
+          <span className="text-xs text-muted-foreground">Gilt für alle Zeilen</span>
+        </div>
       </div>
 
       {/* Table */}

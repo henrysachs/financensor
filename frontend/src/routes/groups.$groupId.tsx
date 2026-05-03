@@ -298,13 +298,23 @@ function PurchasesView({
   const [localPurchases, setLocalPurchases] = useState(purchases)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [filterCategoryId, setFilterCategoryId] = useState<string | ''>('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortBy, setSortBy] = useState<'date' | 'alpha' | 'amount'>('date')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [bulkAction, setBulkAction] = useState<'delete' | 'move' | 'paidby' | null>(null)
   const [bulkTripId, setBulkTripId] = useState('')
   const [bulkPaidBy, setBulkPaidBy] = useState('')
 
-  const filteredPurchases = filterCategoryId
-    ? localPurchases.filter((p) => p.categoryId === filterCategoryId)
-    : localPurchases
+  const filteredPurchases = localPurchases
+    .filter((p) => !filterCategoryId || p.categoryId === filterCategoryId)
+    .filter((p) => !searchQuery || p.description.toLowerCase().includes(searchQuery.toLowerCase()))
+    .sort((a, b) => {
+      let cmp = 0
+      if (sortBy === 'date') cmp = a.purchasedAt.localeCompare(b.purchasedAt)
+      else if (sortBy === 'alpha') cmp = a.description.localeCompare(b.description, 'de')
+      else if (sortBy === 'amount') cmp = a.amountCents - b.amountCents
+      return sortDir === 'asc' ? cmp : -cmp
+    })
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -400,8 +410,15 @@ function PurchasesView({
 
   return (
     <div>
-      {/* Category filter */}
-      <div className="mb-4 flex items-center gap-3">
+      {/* Search, filter, sort */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <input
+          type="text"
+          placeholder="Suche..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-40 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+        />
         <select
           value={filterCategoryId}
           onChange={(e) => setFilterCategoryId(e.target.value)}
@@ -412,12 +429,29 @@ function PurchasesView({
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
+        <select
+          value={`${sortBy}-${sortDir}`}
+          onChange={(e) => {
+            const [by, dir] = e.target.value.split('-') as ['date' | 'alpha' | 'amount', 'asc' | 'desc']
+            setSortBy(by)
+            setSortDir(dir)
+          }}
+          className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="date-desc">Neueste zuerst</option>
+          <option value="date-asc">Älteste zuerst</option>
+          <option value="alpha-asc">A → Z</option>
+          <option value="alpha-desc">Z → A</option>
+          <option value="amount-desc">Betrag absteigend</option>
+          <option value="amount-asc">Betrag aufsteigend</option>
+        </select>
         {filteredPurchases.length > 0 && (
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <input type="checkbox" checked={selectedIds.size === filteredPurchases.length && filteredPurchases.length > 0} onChange={toggleAll} className="rounded" />
             Alle
           </label>
         )}
+        <span className="text-xs text-muted-foreground">{filteredPurchases.length} Einträge</span>
       </div>
 
       {/* Bulk action toolbar */}
