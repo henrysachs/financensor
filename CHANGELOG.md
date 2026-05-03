@@ -1,3 +1,15 @@
+# [0.2.0](https://github.com/henrysachs/financensor/compare/v0.1.0...v0.2.0) (2026-05-03)
+
+
+### Bug Fixes
+
+* categories ([0cb4ae0](https://github.com/henrysachs/financensor/commit/0cb4ae09d92591c6d0249f6e079020d0f2615b74))
+
+
+### Features
+
+* resilient auth guard — only clear token on 401, not network errors ([6fc3478](https://github.com/henrysachs/financensor/commit/6fc3478ef6c31dbcc2207efbb52c998573fd1780))
+
 # [0.1.0](https://github.com/henrysachs/financensor/compare/v0.0.3...v0.1.0) (2026-05-03)
 
 
