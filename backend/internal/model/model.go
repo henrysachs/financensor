@@ -41,13 +41,25 @@ type Category struct {
 type Purchase struct {
 	ID          string    `db:"id" json:"id"`
 	GroupID     string    `db:"group_id" json:"groupId"`
+	TripID      *string   `db:"trip_id" json:"tripId,omitempty"`
 	Description string    `db:"description" json:"description"`
 	AmountCents int64     `db:"amount_cents" json:"amountCents"`
 	PaidByID    string    `db:"paid_by_user_id" json:"paidByUserId"`
 	CategoryID  *string   `db:"category_id" json:"categoryId,omitempty"`
 	ReceiptURL  *string   `db:"receipt_url" json:"receiptUrl,omitempty"`
+	PurchasedAt string    `db:"purchased_at" json:"purchasedAt"`
 	CreatedBy   string    `db:"created_by" json:"createdBy"`
 	CreatedAt   time.Time `db:"created_at" json:"createdAt"`
+}
+
+type Trip struct {
+	ID          string  `db:"id" json:"id"`
+	GroupID     string  `db:"group_id" json:"groupId"`
+	Name        string  `db:"name" json:"name"`
+	Description *string `db:"description" json:"description,omitempty"`
+	TripDate    string  `db:"trip_date" json:"tripDate"`
+	CreatedBy   string  `db:"created_by" json:"createdBy"`
+	CreatedAt   string  `db:"created_at" json:"createdAt"`
 }
 
 type Assignment struct {

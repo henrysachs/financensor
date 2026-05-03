@@ -1,4 +1,4 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute, redirect, Link, useRouter } from '@tanstack/react-router'
 import { api, type Member } from '@/lib/api'
 import { isAuthenticated, clearToken } from '@/lib/auth'
 import { useState, useRef, useCallback } from 'react'
@@ -46,6 +46,7 @@ function createEmptyRow(defaultPaidBy: string, defaultAssigned: string[]): Purch
 
 function BulkAddPurchases() {
   const { group, members, user } = Route.useLoaderData()
+  const router = useRouter()
   const defaultAssigned = members.map((m) => m.id)
 
   const [rows, setRows] = useState<PurchaseRow[]>(() => [
@@ -116,6 +117,7 @@ function BulkAddPurchases() {
       }))
 
       await api.createPurchasesBulk(group.id, purchases)
+      await router.invalidate()
       setSubmitted(true)
     } finally {
       setSubmitting(false)
@@ -131,18 +133,20 @@ function BulkAddPurchases() {
             {rows.filter((r) => r.description.trim() && r.amount.trim()).length} Ausgaben erfasst.
           </p>
           <div className="mt-4 flex justify-center gap-3">
-            <a
-              href={`/groups/${group.id}/add`}
+            <Link
+              to="/groups/$groupId/add"
+              params={{ groupId: group.id }}
               className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
             >
               Weitere erfassen
-            </a>
-            <a
-              href={`/groups/${group.id}`}
+            </Link>
+            <Link
+              to="/groups/$groupId"
+              params={{ groupId: group.id }}
               className="inline-flex items-center rounded-md bg-secondary px-4 py-2 text-sm font-medium text-secondary-foreground hover:bg-accent"
             >
               Zur Gruppe
-            </a>
+            </Link>
           </div>
         </div>
       </div>
@@ -158,12 +162,13 @@ function BulkAddPurchases() {
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
       <header className="mb-6">
-        <a
-          href={`/groups/${group.id}`}
+        <Link
+          to="/groups/$groupId"
+          params={{ groupId: group.id }}
           className="text-sm text-muted-foreground hover:text-foreground"
         >
           &larr; {group.name}
-        </a>
+        </Link>
         <h1 className="mt-2 text-xl font-bold">Ausgaben erfassen</h1>
         <p className="text-sm text-muted-foreground">
           Tab/Enter zum Navigieren. Enter im Betrag-Feld springt zur nächsten Zeile.

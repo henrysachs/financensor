@@ -2,8 +2,11 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -39,10 +42,10 @@ func getOAuthConfig() *oauth2.Config {
 }
 
 type GoogleUserInfo struct {
-	Sub       string `json:"sub"`
-	Name      string `json:"name"`
-	Email     string `json:"email"`
-	Picture   string `json:"picture"`
+	Sub     string `json:"sub"`
+	Name    string `json:"name"`
+	Email   string `json:"email"`
+	Picture string `json:"picture"`
 }
 
 type Claims struct {
@@ -54,7 +57,7 @@ func GenerateToken(userID string) (string, error) {
 	claims := Claims{
 		UserID: userID,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}
@@ -82,18 +85,30 @@ func ParseToken(tokenStr string) (*Claims, error) {
 	return claims, nil
 }
 
+// writeProblem writes an RFC 9457 problem+json error response
+func writeError(w http.ResponseWriter, status int, detail string) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]any{
+		"type":   "about:blank",
+		"title":  http.StatusText(status),
+		"status": status,
+		"detail": detail,
+	})
+}
+
 func JWTMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		if len(auth) < 8 || auth[:7] != "Bearer " {
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		authHeader := r.Header.Get("Authorization")
+		if len(authHeader) < 8 || authHeader[:7] != "Bearer " {
+			writeError(w, http.StatusUnauthorized, "missing or malformed authorization header")
 			return
 		}
 
-		tokenStr := auth[7:]
+		tokenStr := authHeader[7:]
 		claims, err := ParseToken(tokenStr)
 		if err != nil {
-			http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+			writeError(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
 
@@ -107,15 +122,57 @@ func GetUserID(ctx context.Context) string {
 	return uid
 }
 
+// generateState creates a cryptographically random state string
+func generateState() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)
+}
+
 func HandleGoogleLogin(w http.ResponseWriter, r *http.Request) {
 	cfg := getOAuthConfig()
-	url := cfg.AuthCodeURL("state", oauth2.AccessTypeOffline)
+	state := generateState()
+
+	// Store state in a short-lived cookie for CSRF validation
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    state,
+		Path:     "/api/v1/auth",
+		MaxAge:   300, // 5 minutes
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	url := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline)
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
 
 func HandleGoogleCallback(db *sqlx.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cfg := getOAuthConfig()
+
+		// Validate CSRF state
+		stateCookie, err := r.Cookie("oauth_state")
+		if err != nil || stateCookie.Value == "" {
+			slog.Warn("oauth callback: missing state cookie")
+			http.Error(w, "invalid state", http.StatusBadRequest)
+			return
+		}
+		if r.URL.Query().Get("state") != stateCookie.Value {
+			slog.Warn("oauth callback: state mismatch")
+			http.Error(w, "invalid state", http.StatusBadRequest)
+			return
+		}
+
+		// Clear state cookie
+		http.SetCookie(w, &http.Cookie{
+			Name:   "oauth_state",
+			Value:  "",
+			Path:   "/api/v1/auth",
+			MaxAge: -1,
+		})
+
 		code := r.URL.Query().Get("code")
 		if code == "" {
 			http.Error(w, "missing code", http.StatusBadRequest)
@@ -124,6 +181,7 @@ func HandleGoogleCallback(db *sqlx.DB) http.HandlerFunc {
 
 		token, err := cfg.Exchange(r.Context(), code)
 		if err != nil {
+			slog.Error("oauth exchange failed", "error", err)
 			http.Error(w, "oauth exchange failed", http.StatusInternalServerError)
 			return
 		}
@@ -131,6 +189,7 @@ func HandleGoogleCallback(db *sqlx.DB) http.HandlerFunc {
 		client := cfg.Client(r.Context(), token)
 		resp, err := client.Get("https://www.googleapis.com/oauth2/v3/userinfo")
 		if err != nil {
+			slog.Error("failed to get user info", "error", err)
 			http.Error(w, "failed to get user info", http.StatusInternalServerError)
 			return
 		}
@@ -138,6 +197,7 @@ func HandleGoogleCallback(db *sqlx.DB) http.HandlerFunc {
 
 		var info GoogleUserInfo
 		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+			slog.Error("failed to decode user info", "error", err)
 			http.Error(w, "failed to decode user info", http.StatusInternalServerError)
 			return
 		}
@@ -153,6 +213,7 @@ func HandleGoogleCallback(db *sqlx.DB) http.HandlerFunc {
 				userID, info.Name, info.Email, info.Sub, info.Picture,
 			)
 			if err != nil {
+				slog.Error("failed to create user", "error", err, "email", info.Email, "google_id", info.Sub)
 				http.Error(w, "failed to create user", http.StatusInternalServerError)
 				return
 			}
@@ -160,6 +221,7 @@ func HandleGoogleCallback(db *sqlx.DB) http.HandlerFunc {
 
 		jwtToken, err := GenerateToken(userID)
 		if err != nil {
+			slog.Error("failed to generate token", "error", err, "user_id", userID)
 			http.Error(w, "failed to generate token", http.StatusInternalServerError)
 			return
 		}

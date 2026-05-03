@@ -11,6 +11,7 @@ import (
 
 	"github.com/henrysachs/financensor/backend/internal/api"
 	"github.com/henrysachs/financensor/backend/internal/db"
+	"github.com/henrysachs/financensor/backend/internal/telemetry"
 	"github.com/joho/godotenv"
 )
 
@@ -28,6 +29,11 @@ func main() {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
+
+	// Initialize tracing
+	ctx := context.Background()
+	shutdownTracing := telemetry.Init(ctx, "financensor-backend", "1.0.0")
+	defer shutdownTracing(ctx)
 
 	dbPath := envOrDefault("DB_PATH", "financensor.db")
 	database, err := db.Open(dbPath)
@@ -65,10 +71,10 @@ func main() {
 	<-quit
 
 	slog.Info("shutting down server")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("server forced to shutdown", "error", err)
 	}
 }

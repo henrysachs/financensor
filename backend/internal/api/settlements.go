@@ -1,33 +1,49 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"sort"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/henrysachs/financensor/backend/internal/auth"
 	"github.com/henrysachs/financensor/backend/internal/model"
 	"github.com/jmoiron/sqlx"
 )
 
-type settlementResponse struct {
+// --- Input/Output types ---
+
+type SettlementResponse struct {
 	FromUserID  string `json:"fromUserId"`
 	ToUserID    string `json:"toUserId"`
 	AmountCents int64  `json:"amountCents"`
 }
 
-func calculateSettlements(db *sqlx.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		groupID := chi.URLParam(r, "groupID")
-		userID := auth.GetUserID(r.Context())
+type CalculateSettlementsOutput struct {
+	Body []SettlementResponse
+}
 
-		if !isMember(db, groupID, userID) {
-			writeError(w, http.StatusForbidden, "not a member")
-			return
+type MarkSettlementPaidInput struct {
+	GroupID      string `path:"groupID" doc:"Group ID"`
+	SettlementID string `path:"settlementID" doc:"Settlement ID"`
+}
+
+// --- Route registration ---
+
+func registerSettlementRoutes(api huma.API, db *sqlx.DB) {
+	huma.Register(api, huma.Operation{
+		OperationID: "calculate-settlements",
+		Method:      http.MethodGet,
+		Path:        "/groups/{groupID}/settlements",
+		Summary:     "Calculate settlements for a group",
+		Tags:        []string{"Settlements"},
+	}, func(ctx context.Context, input *GroupPathParams) (*CalculateSettlementsOutput, error) {
+		userID := auth.GetUserID(ctx)
+
+		if !isMember(db, input.GroupID, userID) {
+			return nil, huma.Error403Forbidden("not a member")
 		}
 
-		// Get all purchases with assignments for this group
 		type purchaseRow struct {
 			PurchaseID   string `db:"purchase_id"`
 			AmountCents  int64  `db:"amount_cents"`
@@ -38,13 +54,11 @@ func calculateSettlements(db *sqlx.DB) http.HandlerFunc {
 		err := db.Select(&purchases, `
 			SELECT id as purchase_id, amount_cents, paid_by_user_id
 			FROM purchases WHERE group_id = ?
-		`, groupID)
+		`, input.GroupID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to get purchases")
-			return
+			return nil, huma.Error500InternalServerError("failed to get purchases", err)
 		}
 
-		// balance[userID] = net amount (positive = owed money, negative = owes money)
 		balance := make(map[string]int64)
 
 		for _, p := range purchases {
@@ -55,7 +69,6 @@ func calculateSettlements(db *sqlx.DB) http.HandlerFunc {
 				continue
 			}
 
-			// Calculate shares
 			totalCustom := int64(0)
 			customCount := 0
 			for _, a := range assignments {
@@ -65,17 +78,13 @@ func calculateSettlements(db *sqlx.DB) http.HandlerFunc {
 				}
 			}
 
-			// Payer gets credited
 			balance[p.PaidByUserID] += p.AmountCents
 
-			// Distribute costs
 			if customCount == len(assignments) {
-				// All custom shares
 				for _, a := range assignments {
 					balance[a.UserID] -= *a.CustomShareCents
 				}
 			} else {
-				// Equal split for non-custom, remainder to first
 				remaining := p.AmountCents - totalCustom
 				equalCount := len(assignments) - customCount
 				shareEach := remaining / int64(equalCount)
@@ -97,72 +106,47 @@ func calculateSettlements(db *sqlx.DB) http.HandlerFunc {
 			}
 		}
 
-		// Min-cash-flow algorithm
 		settlements := minCashFlow(balance)
+		return &CalculateSettlementsOutput{Body: settlements}, nil
+	})
 
-		writeJSON(w, http.StatusOK, settlements)
-	}
-}
+	huma.Register(api, huma.Operation{
+		OperationID: "mark-settlement-paid",
+		Method:      http.MethodPost,
+		Path:        "/groups/{groupID}/settlements/{settlementID}/paid",
+		Summary:     "Mark a settlement as paid",
+		Tags:        []string{"Settlements"},
+	}, func(ctx context.Context, input *MarkSettlementPaidInput) (*StatusOutput, error) {
+		userID := auth.GetUserID(ctx)
 
-func markSettlementPaid(db *sqlx.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		groupID := chi.URLParam(r, "groupID")
-		settlementID := chi.URLParam(r, "settlementID")
-		userID := auth.GetUserID(r.Context())
-
-		if !isMember(db, groupID, userID) {
-			writeError(w, http.StatusForbidden, "not a member")
-			return
+		if !isMember(db, input.GroupID, userID) {
+			return nil, huma.Error403Forbidden("not a member")
 		}
 
-		// Check if settlement exists, if not create it from the request
 		var exists bool
-		err := db.Get(&exists, "SELECT EXISTS(SELECT 1 FROM settlements WHERE id = ? AND group_id = ?)", settlementID, groupID)
+		err := db.Get(&exists, "SELECT EXISTS(SELECT 1 FROM settlements WHERE id = ? AND group_id = ?)", input.SettlementID, input.GroupID)
 		if err != nil || !exists {
-			// Create settlement record from request body
-			writeError(w, http.StatusNotFound, "settlement not found")
-			return
+			return nil, huma.Error404NotFound("settlement not found")
 		}
 
-		_, err = db.Exec("UPDATE settlements SET is_paid = 1 WHERE id = ? AND group_id = ?", settlementID, groupID)
+		_, err = db.Exec("UPDATE settlements SET is_paid = 1 WHERE id = ? AND group_id = ?", input.SettlementID, input.GroupID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to mark as paid")
-			return
+			return nil, huma.Error500InternalServerError("failed to mark as paid", err)
 		}
 
-		writeJSON(w, http.StatusOK, map[string]string{"status": "paid"})
-	}
-}
-
-// persistSettlements saves calculated settlements to DB and returns them with IDs
-func persistSettlements(db *sqlx.DB, groupID string, settlements []settlementResponse) []model.Settlement {
-	result := make([]model.Settlement, 0, len(settlements))
-	for _, s := range settlements {
-		id := uuid.New().String()
-		db.Exec(`
-			INSERT OR REPLACE INTO settlements (id, group_id, from_user_id, to_user_id, amount_cents, is_paid)
-			VALUES (?, ?, ?, ?, ?, 0)
-		`, id, groupID, s.FromUserID, s.ToUserID, s.AmountCents)
-		result = append(result, model.Settlement{
-			ID:          id,
-			GroupID:     groupID,
-			FromUserID:  s.FromUserID,
-			ToUserID:    s.ToUserID,
-			AmountCents: s.AmountCents,
-			IsPaid:      false,
-		})
-	}
-	return result
+		resp := &StatusOutput{}
+		resp.Body.Status = "paid"
+		return resp, nil
+	})
 }
 
 // minCashFlow calculates minimum number of transactions to settle all debts
-func minCashFlow(balance map[string]int64) []settlementResponse {
+func minCashFlow(balance map[string]int64) []SettlementResponse {
 	type entry struct {
 		userID string
 		amount int64
 	}
 
-	// Filter out zero balances
 	var entries []entry
 	for uid, amt := range balance {
 		if amt != 0 {
@@ -170,12 +154,11 @@ func minCashFlow(balance map[string]int64) []settlementResponse {
 		}
 	}
 
-	// Sort: debtors (negative) first, creditors (positive) last
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].amount < entries[j].amount
 	})
 
-	var result []settlementResponse
+	var result []SettlementResponse
 	left, right := 0, len(entries)-1
 
 	for left < right {
@@ -184,7 +167,7 @@ func minCashFlow(balance map[string]int64) []settlementResponse {
 
 		amount := min(-debtor.amount, creditor.amount)
 		if amount > 0 {
-			result = append(result, settlementResponse{
+			result = append(result, SettlementResponse{
 				FromUserID:  debtor.userID,
 				ToUserID:    creditor.userID,
 				AmountCents: amount,
@@ -200,6 +183,10 @@ func minCashFlow(balance map[string]int64) []settlementResponse {
 		if entries[right].amount == 0 {
 			right--
 		}
+	}
+
+	if result == nil {
+		result = []SettlementResponse{}
 	}
 
 	return result

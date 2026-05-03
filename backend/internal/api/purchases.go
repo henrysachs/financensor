@@ -1,200 +1,274 @@
 package api
 
 import (
-	"encoding/json"
+	"context"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 	"github.com/henrysachs/financensor/backend/internal/auth"
 	"github.com/henrysachs/financensor/backend/internal/model"
 	"github.com/jmoiron/sqlx"
 )
 
-type purchaseRequest struct {
-	Description  string   `json:"description"`
-	AmountCents  int64    `json:"amountCents"`
-	PaidByUserID string   `json:"paidByUserId"`
-	CategoryID   *string  `json:"categoryId,omitempty"`
-	AssignedTo   []string `json:"assignedTo"`
-}
+// --- Input/Output types ---
 
-func createPurchase(db *sqlx.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		groupID := chi.URLParam(r, "groupID")
-		userID := auth.GetUserID(r.Context())
-
-		if !isMember(db, groupID, userID) {
-			writeError(w, http.StatusForbidden, "not a member")
-			return
-		}
-
-		var req purchaseRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
-
-		if req.Description == "" || req.AmountCents <= 0 || req.PaidByUserID == "" {
-			writeError(w, http.StatusBadRequest, "description, amountCents, and paidByUserId are required")
-			return
-		}
-
-		purchaseID, err := insertPurchase(db, groupID, userID, req)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create purchase")
-			return
-		}
-
-		writeJSON(w, http.StatusCreated, map[string]string{"id": purchaseID})
+type PurchaseInput struct {
+	GroupID string `path:"groupID" doc:"Group ID"`
+	Body    struct {
+		Description  string   `json:"description" minLength:"1" doc:"Purchase description"`
+		AmountCents  int64    `json:"amountCents" minimum:"1" doc:"Amount in cents"`
+		PaidByUserID string   `json:"paidByUserId" minLength:"1" doc:"User who paid"`
+		CategoryID   *string  `json:"categoryId,omitempty" doc:"Category ID"`
+		TripID       *string  `json:"tripId,omitempty" doc:"Trip ID"`
+		PurchasedAt  *string  `json:"purchasedAt,omitempty" doc:"Date of purchase (YYYY-MM-DD)"`
+		AssignedTo   []string `json:"assignedTo" doc:"User IDs to split between"`
 	}
 }
 
-func createPurchasesBulk(db *sqlx.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		groupID := chi.URLParam(r, "groupID")
-		userID := auth.GetUserID(r.Context())
+type PurchaseBulkInput struct {
+	GroupID string `path:"groupID" doc:"Group ID"`
+	Body    []struct {
+		Description  string   `json:"description" minLength:"1" doc:"Purchase description"`
+		AmountCents  int64    `json:"amountCents" minimum:"1" doc:"Amount in cents"`
+		PaidByUserID string   `json:"paidByUserId" minLength:"1" doc:"User who paid"`
+		CategoryID   *string  `json:"categoryId,omitempty" doc:"Category ID"`
+		TripID       *string  `json:"tripId,omitempty" doc:"Trip ID"`
+		PurchasedAt  *string  `json:"purchasedAt,omitempty" doc:"Date of purchase (YYYY-MM-DD)"`
+		AssignedTo   []string `json:"assignedTo" doc:"User IDs to split between"`
+	}
+}
 
-		if !isMember(db, groupID, userID) {
-			writeError(w, http.StatusForbidden, "not a member")
-			return
+type PurchasePathParams struct {
+	GroupID    string `path:"groupID" doc:"Group ID"`
+	PurchaseID string `path:"purchaseID" doc:"Purchase ID"`
+}
+
+type UpdatePurchaseInput struct {
+	GroupID    string `path:"groupID" doc:"Group ID"`
+	PurchaseID string `path:"purchaseID" doc:"Purchase ID"`
+	Body       struct {
+		Description  string   `json:"description" doc:"Purchase description"`
+		AmountCents  int64    `json:"amountCents" doc:"Amount in cents"`
+		PaidByUserID string   `json:"paidByUserId" doc:"User who paid"`
+		CategoryID   *string  `json:"categoryId,omitempty" doc:"Category ID"`
+		TripID       *string  `json:"tripId,omitempty" doc:"Trip ID"`
+		PurchasedAt  *string  `json:"purchasedAt,omitempty" doc:"Date of purchase (YYYY-MM-DD)"`
+		AssignedTo   []string `json:"assignedTo" doc:"User IDs to split between"`
+	}
+}
+
+type CreatePurchaseOutput struct {
+	Body struct {
+		ID string `json:"id" doc:"Created purchase ID"`
+	}
+}
+
+type BulkPurchaseOutput struct {
+	Body struct {
+		IDs   []string `json:"ids" doc:"Created purchase IDs"`
+		Count int      `json:"count" doc:"Number of purchases created"`
+	}
+}
+
+type PurchaseWithAssignments struct {
+	model.Purchase
+	Assignments []model.Assignment `json:"assignments"`
+}
+
+type ListPurchasesOutput struct {
+	Body []PurchaseWithAssignments
+}
+
+// --- Route registration ---
+
+func registerPurchaseRoutes(api huma.API, db *sqlx.DB) {
+	huma.Register(api, huma.Operation{
+		OperationID: "create-purchase",
+		Method:      http.MethodPost,
+		Path:        "/groups/{groupID}/purchases",
+		Summary:     "Create a purchase",
+		Tags:        []string{"Purchases"},
+	}, func(ctx context.Context, input *PurchaseInput) (*CreatePurchaseOutput, error) {
+		userID := auth.GetUserID(ctx)
+
+		if !isMember(db, input.GroupID, userID) {
+			return nil, huma.Error403Forbidden("not a member")
 		}
 
-		var reqs []purchaseRequest
-		if err := json.NewDecoder(r.Body).Decode(&reqs); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
+		purchaseID, err := insertPurchase(db, input.GroupID, userID, purchaseReq{
+			Description:  input.Body.Description,
+			AmountCents:  input.Body.AmountCents,
+			PaidByUserID: input.Body.PaidByUserID,
+			CategoryID:   input.Body.CategoryID,
+			TripID:       input.Body.TripID,
+			PurchasedAt:  input.Body.PurchasedAt,
+			AssignedTo:   input.Body.AssignedTo,
+		})
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to create purchase", err)
 		}
 
-		ids := make([]string, 0, len(reqs))
-		for _, req := range reqs {
+		resp := &CreatePurchaseOutput{}
+		resp.Body.ID = purchaseID
+		return resp, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "create-purchases-bulk",
+		Method:      http.MethodPost,
+		Path:        "/groups/{groupID}/purchases/bulk",
+		Summary:     "Create multiple purchases",
+		Tags:        []string{"Purchases"},
+	}, func(ctx context.Context, input *PurchaseBulkInput) (*BulkPurchaseOutput, error) {
+		userID := auth.GetUserID(ctx)
+
+		if !isMember(db, input.GroupID, userID) {
+			return nil, huma.Error403Forbidden("not a member")
+		}
+
+		ids := make([]string, 0, len(input.Body))
+		for _, req := range input.Body {
 			if req.Description == "" || req.AmountCents <= 0 || req.PaidByUserID == "" {
 				continue
 			}
-			id, err := insertPurchase(db, groupID, userID, req)
+			id, err := insertPurchase(db, input.GroupID, userID, purchaseReq{
+				Description:  req.Description,
+				AmountCents:  req.AmountCents,
+				PaidByUserID: req.PaidByUserID,
+				CategoryID:   req.CategoryID,
+				TripID:       req.TripID,
+				PurchasedAt:  req.PurchasedAt,
+				AssignedTo:   req.AssignedTo,
+			})
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to create purchase")
-				return
+				return nil, huma.Error500InternalServerError("failed to create purchase", err)
 			}
 			ids = append(ids, id)
 		}
 
-		writeJSON(w, http.StatusCreated, map[string]any{"ids": ids, "count": len(ids)})
-	}
-}
+		resp := &BulkPurchaseOutput{}
+		resp.Body.IDs = ids
+		resp.Body.Count = len(ids)
+		return resp, nil
+	})
 
-func listPurchases(db *sqlx.DB) http.HandlerFunc {
-	type purchaseWithAssignments struct {
-		model.Purchase
-		Assignments []model.Assignment `json:"assignments"`
-	}
+	huma.Register(api, huma.Operation{
+		OperationID: "list-purchases",
+		Method:      http.MethodGet,
+		Path:        "/groups/{groupID}/purchases",
+		Summary:     "List purchases for a group",
+		Tags:        []string{"Purchases"},
+	}, func(ctx context.Context, input *GroupPathParams) (*ListPurchasesOutput, error) {
+		userID := auth.GetUserID(ctx)
 
-	return func(w http.ResponseWriter, r *http.Request) {
-		groupID := chi.URLParam(r, "groupID")
-		userID := auth.GetUserID(r.Context())
-
-		if !isMember(db, groupID, userID) {
-			writeError(w, http.StatusForbidden, "not a member")
-			return
+		if !isMember(db, input.GroupID, userID) {
+			return nil, huma.Error403Forbidden("not a member")
 		}
 
 		var purchases []model.Purchase
 		err := db.Select(&purchases, `
-			SELECT id, group_id, description, amount_cents, paid_by_user_id, category_id, receipt_url, created_by, created_at
-			FROM purchases WHERE group_id = ? ORDER BY created_at DESC
-		`, groupID)
+			SELECT id, group_id, trip_id, description, amount_cents, paid_by_user_id, category_id, receipt_url, purchased_at, created_by, created_at
+			FROM purchases WHERE group_id = ? ORDER BY purchased_at DESC, created_at DESC
+		`, input.GroupID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to list purchases")
-			return
+			return nil, huma.Error500InternalServerError("failed to list purchases", err)
 		}
 
-		result := make([]purchaseWithAssignments, 0, len(purchases))
+		result := make([]PurchaseWithAssignments, 0, len(purchases))
 		for _, p := range purchases {
 			var assignments []model.Assignment
 			db.Select(&assignments, "SELECT id, purchase_id, user_id, custom_share_cents FROM assignments WHERE purchase_id = ?", p.ID)
 			if assignments == nil {
 				assignments = []model.Assignment{}
 			}
-			result = append(result, purchaseWithAssignments{Purchase: p, Assignments: assignments})
+			result = append(result, PurchaseWithAssignments{Purchase: p, Assignments: assignments})
 		}
 
-		writeJSON(w, http.StatusOK, result)
-	}
-}
+		return &ListPurchasesOutput{Body: result}, nil
+	})
 
-func updatePurchase(db *sqlx.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		groupID := chi.URLParam(r, "groupID")
-		purchaseID := chi.URLParam(r, "purchaseID")
-		userID := auth.GetUserID(r.Context())
+	huma.Register(api, huma.Operation{
+		OperationID: "update-purchase",
+		Method:      http.MethodPut,
+		Path:        "/groups/{groupID}/purchases/{purchaseID}",
+		Summary:     "Update a purchase",
+		Tags:        []string{"Purchases"},
+	}, func(ctx context.Context, input *UpdatePurchaseInput) (*StatusOutput, error) {
+		userID := auth.GetUserID(ctx)
 
-		if !canEditPurchase(db, groupID, purchaseID, userID) {
-			writeError(w, http.StatusForbidden, "cannot edit this purchase")
-			return
-		}
-
-		var req purchaseRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
+		if !canEditPurchase(db, input.GroupID, input.PurchaseID, userID) {
+			return nil, huma.Error403Forbidden("cannot edit this purchase")
 		}
 
 		tx, err := db.Beginx()
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to begin transaction")
-			return
+			return nil, huma.Error500InternalServerError("failed to begin transaction", err)
 		}
 		defer tx.Rollback()
 
 		_, err = tx.Exec(`
-			UPDATE purchases SET description = ?, amount_cents = ?, paid_by_user_id = ?, category_id = ?
+			UPDATE purchases SET description = ?, amount_cents = ?, paid_by_user_id = ?, category_id = ?, trip_id = ?, purchased_at = COALESCE(?, purchased_at)
 			WHERE id = ?
-		`, req.Description, req.AmountCents, req.PaidByUserID, req.CategoryID, purchaseID)
+		`, input.Body.Description, input.Body.AmountCents, input.Body.PaidByUserID, input.Body.CategoryID, input.Body.TripID, input.Body.PurchasedAt, input.PurchaseID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update purchase")
-			return
+			return nil, huma.Error500InternalServerError("failed to update purchase", err)
 		}
 
-		// Replace assignments
-		tx.Exec("DELETE FROM assignments WHERE purchase_id = ?", purchaseID)
-		for _, assigneeID := range req.AssignedTo {
+		tx.Exec("DELETE FROM assignments WHERE purchase_id = ?", input.PurchaseID)
+		for _, assigneeID := range input.Body.AssignedTo {
 			tx.Exec(
 				"INSERT INTO assignments (id, purchase_id, user_id) VALUES (?, ?, ?)",
-				uuid.New().String(), purchaseID, assigneeID,
+				uuid.New().String(), input.PurchaseID, assigneeID,
 			)
 		}
 
 		if err := tx.Commit(); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to commit")
-			return
+			return nil, huma.Error500InternalServerError("failed to commit", err)
 		}
 
-		writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
-	}
-}
+		resp := &StatusOutput{}
+		resp.Body.Status = "updated"
+		return resp, nil
+	})
 
-func deletePurchase(db *sqlx.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		groupID := chi.URLParam(r, "groupID")
-		purchaseID := chi.URLParam(r, "purchaseID")
-		userID := auth.GetUserID(r.Context())
+	huma.Register(api, huma.Operation{
+		OperationID: "delete-purchase",
+		Method:      http.MethodDelete,
+		Path:        "/groups/{groupID}/purchases/{purchaseID}",
+		Summary:     "Delete a purchase",
+		Tags:        []string{"Purchases"},
+	}, func(ctx context.Context, input *PurchasePathParams) (*StatusOutput, error) {
+		userID := auth.GetUserID(ctx)
 
-		if !canEditPurchase(db, groupID, purchaseID, userID) {
-			writeError(w, http.StatusForbidden, "cannot delete this purchase")
-			return
+		if !canEditPurchase(db, input.GroupID, input.PurchaseID, userID) {
+			return nil, huma.Error403Forbidden("cannot delete this purchase")
 		}
 
-		_, err := db.Exec("DELETE FROM purchases WHERE id = ?", purchaseID)
+		_, err := db.Exec("DELETE FROM purchases WHERE id = ?", input.PurchaseID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to delete purchase")
-			return
+			return nil, huma.Error500InternalServerError("failed to delete purchase", err)
 		}
 
-		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-	}
+		resp := &StatusOutput{}
+		resp.Body.Status = "deleted"
+		return resp, nil
+	})
 }
 
-func insertPurchase(db *sqlx.DB, groupID, createdBy string, req purchaseRequest) (string, error) {
+// --- Helpers ---
+
+type purchaseReq struct {
+	Description  string
+	AmountCents  int64
+	PaidByUserID string
+	CategoryID   *string
+	TripID       *string
+	PurchasedAt  *string
+	AssignedTo   []string
+}
+
+func insertPurchase(db *sqlx.DB, groupID, createdBy string, req purchaseReq) (string, error) {
 	purchaseID := uuid.New().String()
 
 	tx, err := db.Beginx()
@@ -203,10 +277,18 @@ func insertPurchase(db *sqlx.DB, groupID, createdBy string, req purchaseRequest)
 	}
 	defer tx.Rollback()
 
+	purchasedAt := "date('now')"
+	args := []any{purchaseID, groupID, req.TripID, req.Description, req.AmountCents, req.PaidByUserID, req.CategoryID}
+	if req.PurchasedAt != nil && *req.PurchasedAt != "" {
+		purchasedAt = "?"
+		args = append(args, *req.PurchasedAt)
+	}
+	args = append(args, createdBy)
+
 	_, err = tx.Exec(`
-		INSERT INTO purchases (id, group_id, description, amount_cents, paid_by_user_id, category_id, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, purchaseID, groupID, req.Description, req.AmountCents, req.PaidByUserID, req.CategoryID, createdBy)
+		INSERT INTO purchases (id, group_id, trip_id, description, amount_cents, paid_by_user_id, category_id, purchased_at, created_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, `+purchasedAt+`, ?)
+	`, args...)
 	if err != nil {
 		return "", err
 	}
@@ -225,10 +307,6 @@ func insertPurchase(db *sqlx.DB, groupID, createdBy string, req purchaseRequest)
 }
 
 func canEditPurchase(db *sqlx.DB, groupID, purchaseID, userID string) bool {
-	if isAdmin(db, groupID, userID) {
-		return true
-	}
-	var createdBy string
-	err := db.Get(&createdBy, "SELECT created_by FROM purchases WHERE id = ? AND group_id = ?", purchaseID, groupID)
-	return err == nil && createdBy == userID
+	// Any group member can edit purchases
+	return isMember(db, groupID, userID)
 }

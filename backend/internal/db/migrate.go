@@ -41,11 +41,13 @@ CREATE TABLE IF NOT EXISTS categories (
 CREATE TABLE IF NOT EXISTS purchases (
     id TEXT PRIMARY KEY,
     group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    trip_id TEXT REFERENCES trips(id) ON DELETE SET NULL,
     description TEXT NOT NULL,
     amount_cents INTEGER NOT NULL,
     paid_by_user_id TEXT NOT NULL REFERENCES users(id),
     category_id TEXT REFERENCES categories(id),
     receipt_url TEXT,
+    purchased_at DATE NOT NULL DEFAULT (date('now')),
     created_by TEXT NOT NULL REFERENCES users(id),
     created_at DATETIME NOT NULL DEFAULT (datetime('now'))
 );
@@ -72,6 +74,30 @@ CREATE INDEX IF NOT EXISTS idx_purchases_group ON purchases(group_id);
 CREATE INDEX IF NOT EXISTS idx_assignments_purchase ON assignments(purchase_id);
 CREATE INDEX IF NOT EXISTS idx_settlements_group ON settlements(group_id);
 CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id);
+
+CREATE TABLE IF NOT EXISTS invites (
+    id TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    created_by TEXT NOT NULL REFERENCES users(id),
+    expires_at DATETIME,
+    max_uses INTEGER,
+    use_count INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_invites_group ON invites(group_id);
+
+CREATE TABLE IF NOT EXISTS trips (
+    id TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    trip_date DATE NOT NULL DEFAULT (date('now')),
+    created_by TEXT NOT NULL REFERENCES users(id),
+    created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_trips_group ON trips(group_id);
 `
 
 func Migrate(db *sqlx.DB) error {
@@ -79,5 +105,10 @@ func Migrate(db *sqlx.DB) error {
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+
+	// Incremental migrations for existing DBs
+	db.Exec("ALTER TABLE purchases ADD COLUMN purchased_at DATE NOT NULL DEFAULT (date('now'))")
+	db.Exec("ALTER TABLE purchases ADD COLUMN trip_id TEXT REFERENCES trips(id) ON DELETE SET NULL")
+
 	return nil
 }

@@ -99,9 +99,30 @@ export const api = {
   markSettlementPaid: (groupId: string, settlementId: string) =>
     fetchAPI<void>(`/groups/${groupId}/settlements/${settlementId}/paid`, { method: 'POST' }),
 
+  // Invites
+  createInvite: (groupId: string, opts?: { maxUses?: number; expiresIn?: number }) =>
+    fetchAPI<Invite>(`/groups/${groupId}/invites`, { method: 'POST', body: opts ?? {} }),
+  listInvites: (groupId: string) => fetchAPI<Invite[]>(`/groups/${groupId}/invites`),
+  deleteInvite: (groupId: string, inviteId: string) =>
+    fetchAPI<void>(`/groups/${groupId}/invites/${inviteId}`, { method: 'DELETE' }),
+  acceptInvite: (inviteId: string) =>
+    fetchAPI<{ groupId: string; groupName: string }>(`/invites/${inviteId}/accept`, { method: 'POST' }),
+
+  // Trips
+  listTrips: (groupId: string) => fetchAPI<Trip[]>(`/groups/${groupId}/trips`),
+  getTrip: (groupId: string, tripId: string) => fetchAPI<Trip>(`/groups/${groupId}/trips/${tripId}`),
+  createTrip: (groupId: string, data: { name: string; description?: string; tripDate?: string }) =>
+    fetchAPI<Trip>(`/groups/${groupId}/trips`, { method: 'POST', body: data }),
+  updateTrip: (groupId: string, tripId: string, data: { name: string; description?: string; tripDate?: string }) =>
+    fetchAPI<Trip>(`/groups/${groupId}/trips/${tripId}`, { method: 'PUT', body: data }),
+  deleteTrip: (groupId: string, tripId: string) =>
+    fetchAPI<void>(`/groups/${groupId}/trips/${tripId}`, { method: 'DELETE' }),
+
   // Users
   createGhostUser: (name: string) => fetchAPI<{ id: string }>('/users/ghost', { method: 'POST', body: { name } }),
   claimGhostUser: (userId: string) => fetchAPI<void>(`/users/${userId}/claim`, { method: 'POST' }),
+  mergeGhostUser: (groupId: string, ghostId: string, targetUserId: string) =>
+    fetchAPI<void>(`/groups/${groupId}/members/${ghostId}/merge`, { method: 'POST', body: { targetUserId } }),
 }
 
 // Types
@@ -139,11 +160,13 @@ export type Category = {
 export type Purchase = {
   id: string
   groupId: string
+  tripId?: string
   description: string
   amountCents: number
   paidByUserId: string
   categoryId?: string
   receiptUrl?: string
+  purchasedAt: string
   createdBy: string
   createdAt: string
 }
@@ -165,10 +188,33 @@ export type Settlement = {
   amountCents: number
 }
 
+export type Invite = {
+  id: string
+  groupId: string
+  maxUses?: number
+  useCount: number
+  expiresAt?: string
+  createdAt: string
+}
+
+export type Trip = {
+  id: string
+  groupId: string
+  name: string
+  description?: string
+  tripDate: string
+  createdBy: string
+  createdAt: string
+  totalCents: number
+  purchaseCount: number
+}
+
 export type CreatePurchaseRequest = {
   description: string
   amountCents: number
   paidByUserId: string
   categoryId?: string
+  tripId?: string
+  purchasedAt?: string
   assignedTo: string[]
 }

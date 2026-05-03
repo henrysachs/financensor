@@ -11,10 +11,12 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as InviteInviteIdRouteImport } from './routes/invite.$inviteId'
 import { Route as GroupsGroupIdRouteImport } from './routes/groups.$groupId'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as GroupsGroupIdMembersRouteImport } from './routes/groups.$groupId.members'
 import { Route as GroupsGroupIdAddRouteImport } from './routes/groups.$groupId.add'
+import { Route as GroupsGroupIdTripsTripIdRouteImport } from './routes/groups.$groupId.trips.$tripId'
 
 const DashboardRoute = DashboardRouteImport.update({
   id: '/dashboard',
@@ -24,6 +26,11 @@ const DashboardRoute = DashboardRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InviteInviteIdRoute = InviteInviteIdRouteImport.update({
+  id: '/invite/$inviteId',
+  path: '/invite/$inviteId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GroupsGroupIdRoute = GroupsGroupIdRouteImport.update({
@@ -46,22 +53,32 @@ const GroupsGroupIdAddRoute = GroupsGroupIdAddRouteImport.update({
   path: '/add',
   getParentRoute: () => GroupsGroupIdRoute,
 } as any)
+const GroupsGroupIdTripsTripIdRoute =
+  GroupsGroupIdTripsTripIdRouteImport.update({
+    id: '/trips/$tripId',
+    path: '/trips/$tripId',
+    getParentRoute: () => GroupsGroupIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/groups/$groupId': typeof GroupsGroupIdRouteWithChildren
+  '/invite/$inviteId': typeof InviteInviteIdRoute
   '/groups/$groupId/add': typeof GroupsGroupIdAddRoute
   '/groups/$groupId/members': typeof GroupsGroupIdMembersRoute
+  '/groups/$groupId/trips/$tripId': typeof GroupsGroupIdTripsTripIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/groups/$groupId': typeof GroupsGroupIdRouteWithChildren
+  '/invite/$inviteId': typeof InviteInviteIdRoute
   '/groups/$groupId/add': typeof GroupsGroupIdAddRoute
   '/groups/$groupId/members': typeof GroupsGroupIdMembersRoute
+  '/groups/$groupId/trips/$tripId': typeof GroupsGroupIdTripsTripIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -69,8 +86,10 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/groups/$groupId': typeof GroupsGroupIdRouteWithChildren
+  '/invite/$inviteId': typeof InviteInviteIdRoute
   '/groups/$groupId/add': typeof GroupsGroupIdAddRoute
   '/groups/$groupId/members': typeof GroupsGroupIdMembersRoute
+  '/groups/$groupId/trips/$tripId': typeof GroupsGroupIdTripsTripIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -79,24 +98,30 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/auth/callback'
     | '/groups/$groupId'
+    | '/invite/$inviteId'
     | '/groups/$groupId/add'
     | '/groups/$groupId/members'
+    | '/groups/$groupId/trips/$tripId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/dashboard'
     | '/auth/callback'
     | '/groups/$groupId'
+    | '/invite/$inviteId'
     | '/groups/$groupId/add'
     | '/groups/$groupId/members'
+    | '/groups/$groupId/trips/$tripId'
   id:
     | '__root__'
     | '/'
     | '/dashboard'
     | '/auth/callback'
     | '/groups/$groupId'
+    | '/invite/$inviteId'
     | '/groups/$groupId/add'
     | '/groups/$groupId/members'
+    | '/groups/$groupId/trips/$tripId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -104,6 +129,7 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
   GroupsGroupIdRoute: typeof GroupsGroupIdRouteWithChildren
+  InviteInviteIdRoute: typeof InviteInviteIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -120,6 +146,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/invite/$inviteId': {
+      id: '/invite/$inviteId'
+      path: '/invite/$inviteId'
+      fullPath: '/invite/$inviteId'
+      preLoaderRoute: typeof InviteInviteIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/groups/$groupId': {
@@ -150,17 +183,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GroupsGroupIdAddRouteImport
       parentRoute: typeof GroupsGroupIdRoute
     }
+    '/groups/$groupId/trips/$tripId': {
+      id: '/groups/$groupId/trips/$tripId'
+      path: '/trips/$tripId'
+      fullPath: '/groups/$groupId/trips/$tripId'
+      preLoaderRoute: typeof GroupsGroupIdTripsTripIdRouteImport
+      parentRoute: typeof GroupsGroupIdRoute
+    }
   }
 }
 
 interface GroupsGroupIdRouteChildren {
   GroupsGroupIdAddRoute: typeof GroupsGroupIdAddRoute
   GroupsGroupIdMembersRoute: typeof GroupsGroupIdMembersRoute
+  GroupsGroupIdTripsTripIdRoute: typeof GroupsGroupIdTripsTripIdRoute
 }
 
 const GroupsGroupIdRouteChildren: GroupsGroupIdRouteChildren = {
   GroupsGroupIdAddRoute: GroupsGroupIdAddRoute,
   GroupsGroupIdMembersRoute: GroupsGroupIdMembersRoute,
+  GroupsGroupIdTripsTripIdRoute: GroupsGroupIdTripsTripIdRoute,
 }
 
 const GroupsGroupIdRouteWithChildren = GroupsGroupIdRoute._addFileChildren(
@@ -172,6 +214,7 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRoute,
   AuthCallbackRoute: AuthCallbackRoute,
   GroupsGroupIdRoute: GroupsGroupIdRouteWithChildren,
+  InviteInviteIdRoute: InviteInviteIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

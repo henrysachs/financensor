@@ -2,6 +2,11 @@ services:
   traefik:
     image: traefik:v3.6
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
     environment:
       - DOCKER_API_VERSION=1.45
     command:
@@ -16,6 +21,12 @@ services:
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
       - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-admin@stammkneipe.dev}"
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--metrics.prometheus=true"
+      - "--metrics.prometheus.entrypoint=metrics"
+      - "--entrypoints.metrics.address=:8082"
+      - "--tracing.otlp=true"
+      - "--tracing.otlp.grpc.endpoint=tempo:4317"
+      - "--tracing.otlp.grpc.insecure=true"
     ports:
       - "80:80"
       - "443:443"
@@ -26,6 +37,11 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
     environment:
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
@@ -33,6 +49,7 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - FRONTEND_URL=${FRONTEND_URL:-https://financensor.stammkneipe.dev}
       - DB_PATH=/app/data/financensor.db
+      - OTEL_EXPORTER_OTLP_ENDPOINT=tempo:4317
     volumes:
       - db-data:/app/data
       - uploads:/app/uploads
@@ -52,6 +69,11 @@ services:
   frontend:
     build: ./frontend
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
     depends_on:
       backend:
         condition: service_healthy
@@ -62,7 +84,157 @@ services:
       - "traefik.http.routers.frontend.tls.certresolver=letsencrypt"
       - "traefik.http.services.frontend.loadbalancer.server.port=80"
 
+  # --- Backup ---
+
+  backup:
+    image: alpine:latest
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        apk add --no-cache sqlite curl ca-certificates &&
+        curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc &&
+        chmod +x /usr/local/bin/mc &&
+        mc alias set r2 https://7cb10be7dbb64dbd4a8cca008bc1cc06.r2.cloudflarestorage.com $${R2_ACCESS_KEY} $${R2_SECRET_KEY} &&
+        echo "0 */6 * * * /scripts/backup-r2.sh" | crontab - &&
+        echo "[backup] Cron scheduled (every 6h). Running initial backup..." &&
+        /scripts/backup-r2.sh &&
+        crond -f
+    environment:
+      - R2_ACCESS_KEY=${R2_ACCESS_KEY}
+      - R2_SECRET_KEY=${R2_SECRET_KEY}
+    volumes:
+      - db-data:/data:ro
+      - ./scripts/backup-r2.sh:/scripts/backup-r2.sh:ro
+
+  # --- Observability Stack ---
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+
+  loki:
+    image: grafana/loki:3.5.0
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    volumes:
+      - ./monitoring/loki.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+
+  promtail:
+    image: grafana/promtail:3.5.0
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    volumes:
+      - ./monitoring/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+
+  tempo:
+    image: grafana/tempo:2.7.2
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    volumes:
+      - ./monitoring/tempo.yml:/etc/tempo/config.yaml:ro
+      - tempo-data:/var/tempo
+    command: -config.file=/etc/tempo/config.yaml
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.tempo-otlp.rule=Host(`api.financensor.stammkneipe.dev`) && PathPrefix(`/otlp`)"
+      - "traefik.http.routers.tempo-otlp.entrypoints=websecure"
+      - "traefik.http.routers.tempo-otlp.tls.certresolver=letsencrypt"
+      - "traefik.http.middlewares.tempo-strip.stripprefix.prefixes=/otlp"
+      - "traefik.http.middlewares.tempo-cors.headers.accesscontrolalloworiginlist=https://financensor.stammkneipe.dev"
+      - "traefik.http.middlewares.tempo-cors.headers.accesscontrolallowmethods=POST,OPTIONS"
+      - "traefik.http.middlewares.tempo-cors.headers.accesscontrolallowheaders=Content-Type"
+      - "traefik.http.routers.tempo-otlp.middlewares=tempo-cors,tempo-strip"
+      - "traefik.http.services.tempo-otlp.loadbalancer.server.port=4318"
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_SERVER_ROOT_URL=https://grafana.financensor.stammkneipe.dev
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./monitoring/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards/json:ro
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.financensor.stammkneipe.dev`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+
 volumes:
   db-data:
   uploads:
   letsencrypt:
+  prometheus-data:
+  loki-data:
+  tempo-data:
+  grafana-data:

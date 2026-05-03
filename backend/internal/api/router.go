@@ -1,100 +1,88 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/henrysachs/financensor/backend/internal/auth"
 	"github.com/jmoiron/sqlx"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 func NewRouter(db *sqlx.DB) http.Handler {
 	r := chi.NewRouter()
 
+	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.RequestID)
+	r.Use(func(next http.Handler) http.Handler {
+		return otelhttp.NewHandler(next, "financensor",
+			otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+				return r.Method + " " + r.URL.Path
+			}),
+		)
+	})
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:5173", "https://financensor.stammkneipe.dev"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "traceparent", "tracestate"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// Serve uploaded receipts
+	// Serve uploaded receipts (protected)
 	fileServer := http.FileServer(http.Dir(uploadsDir))
-	r.Handle("/uploads/*", http.StripPrefix("/uploads/", fileServer))
+	r.Group(func(r chi.Router) {
+		r.Use(auth.JWTMiddleware)
+		r.Handle("/uploads/*", http.StripPrefix("/uploads/", fileServer))
+	})
 
-	r.Route("/api/v1", func(r chi.Router) {
-		// Public routes
-		r.Route("/auth", func(r chi.Router) {
-			r.Get("/google/login", auth.HandleGoogleLogin)
-			r.Get("/google/callback", auth.HandleGoogleCallback(db))
+	// Plain chi routes for OAuth (redirects, not JSON)
+	r.Route("/api/v1/auth", func(r chi.Router) {
+		r.Get("/google/login", auth.HandleGoogleLogin)
+		r.Get("/google/callback", auth.HandleGoogleCallback(db))
+	})
+
+	// Huma API config
+	apiConfig := huma.DefaultConfig("Financensor API", "1.0.0")
+	apiConfig.Servers = []*huma.Server{
+		{URL: "https://api.financensor.stammkneipe.dev"},
+	}
+
+	// Public Huma routes (OpenAPI docs)
+	r.Route("/api/v1", func(sub chi.Router) {
+		// Public sub-group for docs/schemas (no auth)
+		sub.Group(func(pub chi.Router) {
+			humachi.New(pub, apiConfig)
+			// Huma auto-registers /openapi.json, /docs, /schemas/* here
 		})
 
-		// Protected routes
-		r.Group(func(r chi.Router) {
-			r.Use(auth.JWTMiddleware)
+		// Protected sub-group for all API endpoints
+		sub.Group(func(prot chi.Router) {
+			prot.Use(auth.JWTMiddleware)
 
-			r.Route("/groups", func(r chi.Router) {
-				r.Post("/", createGroup(db))
-				r.Get("/", listGroups(db))
+			api := humachi.New(prot, apiConfig)
 
-				r.Route("/{groupID}", func(r chi.Router) {
-					r.Get("/", getGroup(db))
-					r.Put("/", updateGroup(db))
-					r.Delete("/", deleteGroup(db))
-
-					r.Route("/members", func(r chi.Router) {
-						r.Get("/", listMembers(db))
-						r.Post("/", addMember(db))
-						r.Delete("/{userID}", removeMember(db))
-					})
-
-					r.Route("/purchases", func(r chi.Router) {
-						r.Post("/", createPurchase(db))
-						r.Post("/bulk", createPurchasesBulk(db))
-						r.Get("/", listPurchases(db))
-						r.Put("/{purchaseID}", updatePurchase(db))
-						r.Delete("/{purchaseID}", deletePurchase(db))
-						r.Post("/{purchaseID}/receipt", uploadReceipt(db))
-					})
-
-					r.Route("/categories", func(r chi.Router) {
-						r.Post("/", createCategory(db))
-						r.Get("/", listCategories(db))
-					})
-
-					r.Get("/settlements", calculateSettlements(db))
-					r.Post("/settlements/{settlementID}/paid", markSettlementPaid(db))
-				})
-			})
-
-			r.Route("/users", func(r chi.Router) {
-				r.Get("/me", getMe(db))
-				r.Post("/ghost", createGhostUser(db))
-				r.Post("/{userID}/claim", claimGhostUser(db))
-			})
+			registerGroupRoutes(api, db)
+			registerPurchaseRoutes(api, db)
+			registerCategoryRoutes(api, db)
+			registerSettlementRoutes(api, db)
+			registerUserRoutes(api, db)
+			registerReceiptRoutes(api, db)
+			registerInviteRoutes(api, db)
+			registerTripRoutes(api, db)
 		})
 	})
 
 	return r
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
 }

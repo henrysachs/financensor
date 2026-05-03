@@ -1,0 +1,19 @@
+[tasks.deploy]
+description = "Full deploy: sync, env, build & start on Hetzner"
+depends = ["deploy:sync", "deploy:env", "deploy:up"]
+
+[tasks."deploy:sync"]
+description = "Rsync project to server"
+run = """
+rsync -avz --exclude='node_modules' --exclude='.git' --exclude='dist' --exclude='*.db' \
+  -e "ssh -i ~/.ssh/hetzner_ed25519" \
+  ./ root@116.203.26.33:/opt/financensor/
+"""
+
+[tasks."deploy:env"]
+description = "Copy production env to server"
+run = "scp -i ~/.ssh/hetzner_ed25519 .env.production root@116.203.26.33:/opt/financensor/.env"
+
+[tasks."deploy:up"]
+description = "Build and start containers on server"
+run = "ssh hetzner 'cd /opt/financensor && docker compose --env-file .env up --build -d'"

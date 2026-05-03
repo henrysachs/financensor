@@ -1,72 +1,85 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 	"github.com/henrysachs/financensor/backend/internal/auth"
 	"github.com/henrysachs/financensor/backend/internal/model"
 	"github.com/jmoiron/sqlx"
 )
 
-func createCategory(db *sqlx.DB) http.HandlerFunc {
-	type request struct {
-		Name string `json:"name"`
-	}
+// --- Input/Output types ---
 
-	return func(w http.ResponseWriter, r *http.Request) {
-		groupID := chi.URLParam(r, "groupID")
-		userID := auth.GetUserID(r.Context())
-
-		if !isMember(db, groupID, userID) {
-			writeError(w, http.StatusForbidden, "not a member")
-			return
-		}
-
-		var req request
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
-
-		if req.Name == "" {
-			writeError(w, http.StatusBadRequest, "name is required")
-			return
-		}
-
-		id := uuid.New().String()
-		_, err := db.Exec("INSERT INTO categories (id, group_id, name) VALUES (?, ?, ?)", id, groupID, req.Name)
-		if err != nil {
-			writeError(w, http.StatusConflict, "category already exists")
-			return
-		}
-
-		writeJSON(w, http.StatusCreated, map[string]string{"id": id})
+type CreateCategoryInput struct {
+	GroupID string `path:"groupID" doc:"Group ID"`
+	Body    struct {
+		Name string `json:"name" minLength:"1" doc:"Category name"`
 	}
 }
 
-func listCategories(db *sqlx.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		groupID := chi.URLParam(r, "groupID")
-		userID := auth.GetUserID(r.Context())
+type CreateCategoryOutput struct {
+	Body struct {
+		ID string `json:"id" doc:"Created category ID"`
+	}
+}
 
-		if !isMember(db, groupID, userID) {
-			writeError(w, http.StatusForbidden, "not a member")
-			return
+type ListCategoriesOutput struct {
+	Body []model.Category
+}
+
+// --- Route registration ---
+
+func registerCategoryRoutes(api huma.API, db *sqlx.DB) {
+	huma.Register(api, huma.Operation{
+		OperationID: "create-category",
+		Method:      http.MethodPost,
+		Path:        "/groups/{groupID}/categories",
+		Summary:     "Create a category",
+		Tags:        []string{"Categories"},
+	}, func(ctx context.Context, input *CreateCategoryInput) (*CreateCategoryOutput, error) {
+		userID := auth.GetUserID(ctx)
+
+		if !isMember(db, input.GroupID, userID) {
+			return nil, huma.Error403Forbidden("not a member")
+		}
+
+		id := uuid.New().String()
+		_, err := db.Exec("INSERT INTO categories (id, group_id, name) VALUES (?, ?, ?)", id, input.GroupID, input.Body.Name)
+		if err != nil {
+			return nil, huma.Error409Conflict("category already exists")
+		}
+
+		resp := &CreateCategoryOutput{}
+		resp.Body.ID = id
+		return resp, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "list-categories",
+		Method:      http.MethodGet,
+		Path:        "/groups/{groupID}/categories",
+		Summary:     "List categories for a group",
+		Tags:        []string{"Categories"},
+	}, func(ctx context.Context, input *GroupPathParams) (*ListCategoriesOutput, error) {
+		userID := auth.GetUserID(ctx)
+
+		if !isMember(db, input.GroupID, userID) {
+			return nil, huma.Error403Forbidden("not a member")
 		}
 
 		var categories []model.Category
-		err := db.Select(&categories, "SELECT id, group_id, name FROM categories WHERE group_id = ?", groupID)
+		err := db.Select(&categories, "SELECT id, group_id, name FROM categories WHERE group_id = ?", input.GroupID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to list categories")
-			return
+			return nil, huma.Error500InternalServerError("failed to list categories", err)
 		}
 
 		if categories == nil {
 			categories = []model.Category{}
 		}
 
-		writeJSON(w, http.StatusOK, categories)
-	}
+		return &ListCategoriesOutput{Body: categories}, nil
+	})
 }

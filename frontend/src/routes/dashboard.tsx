@@ -1,4 +1,4 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute, redirect, Link } from '@tanstack/react-router'
 import { api, type Group } from '@/lib/api'
 import { isAuthenticated, clearToken } from '@/lib/auth'
 
@@ -66,15 +66,16 @@ function Dashboard() {
 
 function GroupCard({ group }: { group: Group }) {
   return (
-    <a
-      href={`/groups/${group.id}`}
+    <Link
+      to="/groups/$groupId"
+      params={{ groupId: group.id }}
       className="block rounded-lg border bg-card p-4 transition-colors hover:bg-accent"
     >
       <h3 className="font-medium">{group.name}</h3>
       <p className="mt-1 text-xs text-muted-foreground">
         Erstellt am {new Date(group.createdAt).toLocaleDateString('de-DE')}
       </p>
-    </a>
+    </Link>
   )
 }
 
