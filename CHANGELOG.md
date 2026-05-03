@@ -1,3 +1,10 @@
+## [0.2.3](https://github.com/henrysachs/financensor/compare/v0.2.2...v0.2.3) (2026-05-03)
+
+
+### Bug Fixes
+
+* move auth debug logs to settings drawer, fix pie chart label overflow ([c615c23](https://github.com/henrysachs/financensor/commit/c615c236a5d892ec0504ac4d6b0f16514cce71a9))
+
 ## [0.2.2](https://github.com/henrysachs/financensor/compare/v0.2.1...v0.2.2) (2026-05-03)
 
 
