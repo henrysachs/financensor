@@ -1,3 +1,11 @@
+# [0.3.0](https://github.com/henrysachs/financensor/compare/v0.2.3...v0.3.0) (2026-05-03)
+
+
+### Features
+
+* error toasts, error boundaries, skeleton loading, RFC 9457 parsing ([9c9397e](https://github.com/henrysachs/financensor/commit/9c9397e08d709b624d522fd9deadd336dd4fe913))
+* search/sort for purchases, chip-style bulk controls in add form ([25955b6](https://github.com/henrysachs/financensor/commit/25955b61cd53c31d866666bf8e697c33bcdef799))
+
 ## [0.2.3](https://github.com/henrysachs/financensor/compare/v0.2.2...v0.2.3) (2026-05-03)
 
 
