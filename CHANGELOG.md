@@ -1,3 +1,17 @@
+# [0.5.0](https://github.com/henrysachs/financensor/compare/v0.4.0...v0.5.0) (2026-05-04)
+
+
+### Bug Fixes
+
+* fail ghost merges on partial reassignment errors ([9b828b8](https://github.com/henrysachs/financensor/commit/9b828b85f862df408b87bd289144487723773e4e))
+* pass immutable sqlite path to datasette ([95dec5a](https://github.com/henrysachs/financensor/commit/95dec5a5b41917c3e94469f92d4e4891c90e6846))
+* use datasette subdomain for sqlite viewer ([a72a66d](https://github.com/henrysachs/financensor/commit/a72a66dc638201215c6e842a7d0ecd903ff1e15f))
+
+
+### Features
+
+* add protected datasette sqlite viewer ([6342f7a](https://github.com/henrysachs/financensor/commit/6342f7a6a123915124be79898a3c1611549a01d7))
+
 # [0.4.0](https://github.com/henrysachs/financensor/compare/v0.3.0...v0.4.0) (2026-05-03)
 
 
