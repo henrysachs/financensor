@@ -84,6 +84,40 @@ services:
       - "traefik.http.routers.frontend.tls.certresolver=letsencrypt"
       - "traefik.http.services.frontend.loadbalancer.server.port=80"
 
+  datasette:
+    image: datasetteproject/datasette:latest
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    command:
+      - datasette
+      - serve
+      - /data/financensor.db
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+      - --setting
+      - default_page_size
+      - "50"
+      - --setting
+      - max_returned_rows
+      - "1000"
+      - --immutable
+    volumes:
+      - db-data:/data:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.datasette.rule=Host(`${DATASETTE_HOST:-db.financensor.stammkneipe.dev}`)"
+      - "traefik.http.routers.datasette.entrypoints=websecure"
+      - "traefik.http.routers.datasette.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.datasette.middlewares=datasette-auth"
+      - "traefik.http.middlewares.datasette-auth.basicauth.users=${DATASETTE_BASIC_AUTH}"
+      - "traefik.http.services.datasette.loadbalancer.server.port=8001"
+
   # --- Backup ---
 
   backup:
