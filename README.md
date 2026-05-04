@@ -70,7 +70,6 @@ mise run release-deploy   # semantic-release + deploy tagged version
 
 ## Project Conventions
 
-- German UI text
 - Amounts stored as `int64` cents (`amount_cents`)
 - UUIDs as TEXT primary keys
 - REST API prefix: `/api/v1`
