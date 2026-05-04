@@ -107,6 +107,7 @@ services:
       - max_returned_rows
       - "1000"
       - --immutable
+      - /data/financensor.db
     volumes:
       - db-data:/data:ro
     labels:
