@@ -1,3 +1,10 @@
+# [0.7.0](https://github.com/henrysachs/financensor/compare/v0.6.0...v0.7.0) (2026-05-04)
+
+
+### Features
+
+* unify purchase draft editing ([af2a2ad](https://github.com/henrysachs/financensor/commit/af2a2ad55873a808d11e82dab4b3883f9de11972))
+
 # [0.6.0](https://github.com/henrysachs/financensor/compare/v0.5.0...v0.6.0) (2026-05-04)
 
 
