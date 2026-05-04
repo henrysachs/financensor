@@ -111,7 +111,7 @@ services:
       - db-data:/data:ro
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.datasette.rule=Host(`${DATASETTE_HOST:-db.financensor.stammkneipe.dev}`)"
+      - "traefik.http.routers.datasette.rule=Host(`${DATASETTE_HOST:-datasette.financensor.stammkneipe.dev}`)"
       - "traefik.http.routers.datasette.entrypoints=websecure"
       - "traefik.http.routers.datasette.tls.certresolver=letsencrypt"
       - "traefik.http.routers.datasette.middlewares=datasette-auth"

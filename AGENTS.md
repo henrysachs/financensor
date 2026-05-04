@@ -46,7 +46,7 @@ Backend image: `cgr.dev/chainguard/static` (no shell — healthcheck uses `/fina
 - **Tailwind v4**: CSS-first config in `src/index.css` via `@theme`, no `tailwind.config.js`
 - **Frontend API_BASE**: switches between `/api/v1` (dev, Vite proxy) and full URL (prod) via `import.meta.env.PROD`
 - **DB migrations**: inline in `backend/internal/db/migrate.go` (no migration tool, just `CREATE IF NOT EXISTS`)
-- **SQLite viewer**: Datasette on `db.financensor.stammkneipe.dev`, protected via Traefik Basic Auth using `DATASETTE_BASIC_AUTH` from `.env.production`
+- **SQLite viewer**: Datasette on `datasette.financensor.stammkneipe.dev`, protected via Traefik Basic Auth using `DATASETTE_BASIC_AUTH` from `.env.production`
 
 ## Environment Variables (backend)
 
