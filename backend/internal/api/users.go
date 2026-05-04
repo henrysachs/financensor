@@ -108,13 +108,27 @@ func registerUserRoutes(api huma.API, db *sqlx.DB) {
 		}
 		defer tx.Rollback()
 
-		tx.Exec("UPDATE group_members SET user_id = ? WHERE user_id = ?", claimerID, input.UserID)
-		tx.Exec("UPDATE purchases SET paid_by_user_id = ? WHERE paid_by_user_id = ?", claimerID, input.UserID)
-		tx.Exec("UPDATE purchases SET created_by = ? WHERE created_by = ?", claimerID, input.UserID)
-		tx.Exec("UPDATE assignments SET user_id = ? WHERE user_id = ?", claimerID, input.UserID)
-		tx.Exec("UPDATE settlements SET from_user_id = ? WHERE from_user_id = ?", claimerID, input.UserID)
-		tx.Exec("UPDATE settlements SET to_user_id = ? WHERE to_user_id = ?", claimerID, input.UserID)
-		tx.Exec("DELETE FROM users WHERE id = ?", input.UserID)
+		if _, err := tx.Exec("UPDATE group_members SET user_id = ? WHERE user_id = ?", claimerID, input.UserID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to reassign group members", err)
+		}
+		if _, err := tx.Exec("UPDATE purchases SET paid_by_user_id = ? WHERE paid_by_user_id = ?", claimerID, input.UserID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to reassign purchase payer", err)
+		}
+		if _, err := tx.Exec("UPDATE purchases SET created_by = ? WHERE created_by = ?", claimerID, input.UserID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to reassign purchase creator", err)
+		}
+		if _, err := tx.Exec("UPDATE assignments SET user_id = ? WHERE user_id = ?", claimerID, input.UserID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to reassign assignments", err)
+		}
+		if _, err := tx.Exec("UPDATE settlements SET from_user_id = ? WHERE from_user_id = ?", claimerID, input.UserID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to reassign settlements from_user", err)
+		}
+		if _, err := tx.Exec("UPDATE settlements SET to_user_id = ? WHERE to_user_id = ?", claimerID, input.UserID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to reassign settlements to_user", err)
+		}
+		if _, err := tx.Exec("DELETE FROM users WHERE id = ?", input.UserID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to delete ghost user", err)
+		}
 
 		if err := tx.Commit(); err != nil {
 			return nil, huma.Error500InternalServerError("failed to claim ghost user", err)
@@ -161,17 +175,31 @@ func registerUserRoutes(api huma.API, db *sqlx.DB) {
 		defer tx.Rollback()
 
 		// Transfer all references from ghost to target
-		tx.Exec("UPDATE purchases SET paid_by_user_id = ? WHERE paid_by_user_id = ?", input.Body.TargetUserID, input.UserID)
-		tx.Exec("UPDATE purchases SET created_by = ? WHERE created_by = ?", input.Body.TargetUserID, input.UserID)
-		tx.Exec("UPDATE assignments SET user_id = ? WHERE user_id = ?", input.Body.TargetUserID, input.UserID)
-		tx.Exec("UPDATE settlements SET from_user_id = ? WHERE from_user_id = ?", input.Body.TargetUserID, input.UserID)
-		tx.Exec("UPDATE settlements SET to_user_id = ? WHERE to_user_id = ?", input.Body.TargetUserID, input.UserID)
+		if _, err := tx.Exec("UPDATE purchases SET paid_by_user_id = ? WHERE paid_by_user_id = ?", input.Body.TargetUserID, input.UserID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to reassign purchase payer", err)
+		}
+		if _, err := tx.Exec("UPDATE purchases SET created_by = ? WHERE created_by = ?", input.Body.TargetUserID, input.UserID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to reassign purchase creator", err)
+		}
+		if _, err := tx.Exec("UPDATE assignments SET user_id = ? WHERE user_id = ?", input.Body.TargetUserID, input.UserID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to reassign assignments", err)
+		}
+		if _, err := tx.Exec("UPDATE settlements SET from_user_id = ? WHERE from_user_id = ?", input.Body.TargetUserID, input.UserID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to reassign settlements from_user", err)
+		}
+		if _, err := tx.Exec("UPDATE settlements SET to_user_id = ? WHERE to_user_id = ?", input.Body.TargetUserID, input.UserID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to reassign settlements to_user", err)
+		}
 
 		// Remove ghost from group_members (target should already be a member)
-		tx.Exec("DELETE FROM group_members WHERE user_id = ? AND group_id = ?", input.UserID, input.GroupID)
+		if _, err := tx.Exec("DELETE FROM group_members WHERE user_id = ? AND group_id = ?", input.UserID, input.GroupID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to remove ghost group member", err)
+		}
 
 		// Delete ghost user
-		tx.Exec("DELETE FROM users WHERE id = ?", input.UserID)
+		if _, err := tx.Exec("DELETE FROM users WHERE id = ?", input.UserID); err != nil {
+			return nil, huma.Error500InternalServerError("failed to delete ghost user", err)
+		}
 
 		if err := tx.Commit(); err != nil {
 			return nil, huma.Error500InternalServerError("failed to merge ghost user", err)
