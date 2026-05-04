@@ -1,8 +1,15 @@
-import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
-import { api, type PurchaseWithAssignments, type Member, type Category } from '@/lib/api'
+import { createFileRoute, Link, useBlocker, useRouter } from '@tanstack/react-router'
+import { api, type Category, type PurchaseWithAssignments } from '@/lib/api'
 import { requireAuth } from '@/lib/auth'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { RouteError, RouteSkeleton } from '@/components/route-error'
+import { PurchaseDraftRow } from '@/components/purchase-draft-row'
+import {
+  applyPurchaseEditValue,
+  buildPurchaseEditValue,
+  isSamePurchaseEditValue,
+  type PurchaseEditValue,
+} from '@/lib/purchase-edit'
 
 export const Route = createFileRoute('/groups/$groupId/trips/$tripId')({
   beforeLoad: requireAuth,
@@ -17,8 +24,8 @@ export const Route = createFileRoute('/groups/$groupId/trips/$tripId')({
       api.listCategories(params.groupId),
       api.getMe(),
     ])
-    const tripPurchases = purchases.filter((p) => p.tripId === params.tripId)
-    return { group, trip, purchases: tripPurchases, allPurchases: purchases, members, categories, user }
+    const tripPurchases = purchases.filter((purchase) => purchase.tripId === params.tripId)
+    return { group, trip, purchases: tripPurchases, members, categories, user }
   },
   component: TripDetailPage,
 })
@@ -26,13 +33,15 @@ export const Route = createFileRoute('/groups/$groupId/trips/$tripId')({
 function TripDetailPage() {
   const { group, trip, purchases, members, categories: initialCategories, user } = Route.useLoaderData()
   const router = useRouter()
-  const [editingId, setEditingId] = useState<string | null>(null)
   const [localPurchases, setLocalPurchases] = useState(purchases)
   const [categories, setCategories] = useState(initialCategories)
   const [showAdd, setShowAdd] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'date' | 'alpha' | 'amount'>('alpha')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [bulkEditMode, setBulkEditMode] = useState(false)
+  const [showOnlyChanged, setShowOnlyChanged] = useState(false)
+  const [bulkDrafts, setBulkDrafts] = useState<Record<string, PurchaseEditValue>>({})
   const [rows, setRows] = useState<Array<{ id: string; description: string; amount: string; categoryId: string }>>([
     createRow(), createRow(), createRow(),
   ])
@@ -41,14 +50,72 @@ function TripDetailPage() {
   const [newCategoryName, setNewCategoryName] = useState('')
   const [showNewCategory, setShowNewCategory] = useState(false)
 
-  const totalCents = localPurchases.reduce((s, p) => s + p.amountCents, 0)
-  const memberMap = new Map(members.map((m) => [m.id, m]))
-  const categoryMap = new Map(categories.map((c) => [c.id, c]))
-  const allMemberIds = members.map((m) => m.id)
+  const totalCents = localPurchases.reduce((sum, purchase) => sum + purchase.amountCents, 0)
+  const memberMap = new Map(members.map((member) => [member.id, member]))
+  const categoryMap = new Map(categories.map((category) => [category.id, category]))
+  const allMemberIds = members.map((member) => member.id)
+  const draftStorageKey = `trip-edit-drafts:${trip.id}`
+  const bulkDraftCount = Object.keys(bulkDrafts).length
+
+  const filteredPurchases = localPurchases
+    .filter((purchase) => !searchQuery || purchase.description.toLowerCase().includes(searchQuery.toLowerCase()))
+    .filter((purchase) => !showOnlyChanged || purchase.id in bulkDrafts)
+    .sort((left, right) => {
+      let cmp = 0
+      if (sortBy === 'date') cmp = left.purchasedAt.localeCompare(right.purchasedAt)
+      else if (sortBy === 'alpha') cmp = left.description.localeCompare(right.description, 'de')
+      else if (sortBy === 'amount') cmp = left.amountCents - right.amountCents
+      return sortDir === 'asc' ? cmp : -cmp
+    })
 
   function createRow() {
     return { id: crypto.randomUUID(), description: '', amount: '', categoryId: '' }
   }
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(draftStorageKey)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as Record<string, PurchaseEditValue>
+      const validIds = new Set(localPurchases.map((purchase) => purchase.id))
+      const next = Object.fromEntries(
+        Object.entries(parsed).filter(([purchaseId]) => validIds.has(purchaseId))
+      )
+      if (Object.keys(next).length > 0) {
+        setBulkDrafts(next)
+        setBulkEditMode(true)
+      }
+    } catch {
+      window.localStorage.removeItem(draftStorageKey)
+    }
+  }, [draftStorageKey, localPurchases])
+
+  useEffect(() => {
+    if (bulkDraftCount === 0) {
+      window.localStorage.removeItem(draftStorageKey)
+      return
+    }
+    window.localStorage.setItem(draftStorageKey, JSON.stringify(bulkDrafts))
+  }, [bulkDraftCount, bulkDrafts, draftStorageKey])
+
+  useEffect(() => {
+    if (bulkDraftCount === 0) return
+
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [bulkDraftCount])
+
+  useBlocker({
+    shouldBlockFn: () => bulkDraftCount > 0 && !window.confirm('Ungespeicherte Änderungen verwerfen?'),
+    enableBeforeUnload: false,
+    disabled: bulkDraftCount === 0,
+    withResolver: false,
+  })
 
   const handleCreateCategory = async () => {
     if (!newCategoryName.trim()) return
@@ -62,23 +129,23 @@ function TripDetailPage() {
   }
 
   const handleSubmit = async () => {
-    const validRows = rows.filter((r) => r.description.trim() && r.amount.trim())
+    const validRows = rows.filter((row) => row.description.trim() && row.amount.trim())
     if (validRows.length === 0) return
 
     setSubmitting(true)
     try {
-      const data = validRows.map((r) => ({
-        description: r.description.trim(),
-        amountCents: Math.round(parseFloat(r.amount.replace(',', '.')) * 100),
+      const data = validRows.map((row) => ({
+        description: row.description.trim(),
+        amountCents: Math.round(parseFloat(row.amount.replace(',', '.')) * 100),
         paidByUserId: defaultPaidBy,
-        categoryId: r.categoryId || undefined,
+        categoryId: row.categoryId || undefined,
         tripId: trip.id,
         purchasedAt: trip.tripDate,
         assignedTo: allMemberIds,
       }))
       await api.createPurchasesBulk(group.id, data)
       await router.invalidate()
-      setLocalPurchases(await api.listPurchases(group.id).then((all) => all.filter((p) => p.tripId === trip.id)))
+      setLocalPurchases(await api.listPurchases(group.id).then((all) => all.filter((purchase) => purchase.tripId === trip.id)))
       setRows([createRow(), createRow(), createRow()])
       setShowAdd(false)
     } finally {
@@ -86,34 +153,52 @@ function TripDetailPage() {
     }
   }
 
+  const discardBulkDrafts = () => {
+    setBulkDrafts({})
+    window.localStorage.removeItem(draftStorageKey)
+  }
+
   const handleDelete = async (purchaseId: string) => {
     if (!confirm('Eintrag löschen?')) return
     await api.deletePurchase(group.id, purchaseId)
-    setLocalPurchases((prev) => prev.filter((p) => p.id !== purchaseId))
+    setLocalPurchases((prev) => prev.filter((purchase) => purchase.id !== purchaseId))
+    setBulkDrafts((prev) => {
+      const next = { ...prev }
+      delete next[purchaseId]
+      return next
+    })
   }
 
-  const handleUpdate = async (purchaseId: string, data: { description: string; amountCents: number; paidByUserId: string; categoryId?: string; purchasedAt?: string; assignedTo: string[] }) => {
-    await api.updatePurchase(group.id, purchaseId, { ...data, tripId: trip.id })
-    setLocalPurchases((prev) =>
-      prev.map((p) =>
-        p.id === purchaseId
-          ? {
-              ...p,
-              description: data.description,
-              amountCents: data.amountCents,
-              paidByUserId: data.paidByUserId,
-              categoryId: data.categoryId,
-              purchasedAt: data.purchasedAt ?? p.purchasedAt,
-              assignments: data.assignedTo.map((userId, i) => ({
-                id: p.assignments[i]?.id ?? crypto.randomUUID(),
-                purchaseId: p.id,
-                userId,
-              })),
-            }
-          : p
-      )
+  const updateBulkDraft = (purchase: PurchaseWithAssignments, data: PurchaseEditValue) => {
+    const original = buildPurchaseEditValue(purchase)
+    setBulkDrafts((prev) => {
+      if (isSamePurchaseEditValue(data, original)) {
+        const next = { ...prev }
+        delete next[purchase.id]
+        return next
+      }
+      return { ...prev, [purchase.id]: data }
+    })
+  }
+
+  const saveBulkDrafts = async () => {
+    const updates = Object.entries(bulkDrafts)
+    await Promise.all(
+      updates.map(([purchaseId, data]) => api.updatePurchase(group.id, purchaseId, { ...data, tripId: trip.id }))
     )
-    setEditingId(null)
+    setLocalPurchases((prev) =>
+      prev.map((purchase) => {
+        const data = bulkDrafts[purchase.id]
+        if (!data) return purchase
+        return applyPurchaseEditValue(purchase, { ...data, tripId: trip.id })
+      })
+    )
+    setBulkDrafts({})
+    window.localStorage.removeItem(draftStorageKey)
+  }
+
+  const handleCategoryCreated = (category: Category) => {
+    setCategories((prev) => [...prev, category])
   }
 
   return (
@@ -126,15 +211,15 @@ function TripDetailPage() {
         >
           &larr; {group.name}
         </Link>
-        <div className="mt-2 flex items-center justify-between">
+        <div className="mt-2 flex items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-bold">{trip.name}</h1>
             <p className="text-sm text-muted-foreground">
-              {new Date(trip.tripDate).toLocaleDateString('de-DE')} &middot; {purchases.length} Posten &middot; {formatCents(totalCents)}
+              {new Date(trip.tripDate).toLocaleDateString('de-DE')} &middot; {localPurchases.length} Posten &middot; {formatCents(totalCents)}
             </p>
           </div>
           <button
-            onClick={() => setShowAdd(!showAdd)}
+            onClick={() => setShowAdd((prev) => !prev)}
             className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
           >
             + Posten
@@ -183,21 +268,21 @@ function TripDetailPage() {
               </div>
             )}
           </div>
-          {rows.map((row, i) => (
+          {rows.map((row, index) => (
             <div key={row.id} className="grid gap-2 md:grid-cols-[1fr_96px_180px]">
               <input
                 type="text"
                 value={row.description}
-                onChange={(e) => setRows((prev) => prev.map((r, j) => j === i ? { ...r, description: e.target.value } : r))}
+                onChange={(e) => setRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, description: e.target.value } : item))}
                 placeholder="Beschreibung"
                 className="flex-1 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
               />
               <input
                 type="text"
                 value={row.amount}
-                onChange={(e) => setRows((prev) => prev.map((r, j) => j === i ? { ...r, amount: e.target.value } : r))}
+                onChange={(e) => setRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, amount: e.target.value } : item))}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && i === rows.length - 1) {
+                  if (e.key === 'Enter' && index === rows.length - 1) {
                     setRows((prev) => [...prev, createRow()])
                   }
                 }}
@@ -206,7 +291,7 @@ function TripDetailPage() {
               />
               <select
                 value={row.categoryId}
-                onChange={(e) => setRows((prev) => prev.map((r, j) => j === i ? { ...r, categoryId: e.target.value } : r))}
+                onChange={(e) => setRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, categoryId: e.target.value } : item))}
                 className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
               >
                 <option value="">Keine Kategorie</option>
@@ -247,257 +332,193 @@ function TripDetailPage() {
           <p className="text-muted-foreground">Noch keine Posten in dieser Aktivität.</p>
         </div>
       ) : (
-        <div className="space-y-1">
-          {/* Search + sort */}
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <input
-              type="text"
-              placeholder="Suche..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-40 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-            />
-            <select
-              value={`${sortBy}-${sortDir}`}
-              onChange={(e) => {
-                const [by, dir] = e.target.value.split('-') as ['date' | 'alpha' | 'amount', 'asc' | 'desc']
-                setSortBy(by)
-                setSortDir(dir)
-              }}
-              className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="alpha-asc">A → Z</option>
-              <option value="alpha-desc">Z → A</option>
-              <option value="amount-desc">Betrag absteigend</option>
-              <option value="amount-asc">Betrag aufsteigend</option>
-              <option value="date-desc">Neueste zuerst</option>
-              <option value="date-asc">Älteste zuerst</option>
-            </select>
-          </div>
-          {localPurchases
-            .filter((p) => !searchQuery || p.description.toLowerCase().includes(searchQuery.toLowerCase()))
-            .sort((a, b) => {
-              let cmp = 0
-              if (sortBy === 'date') cmp = a.purchasedAt.localeCompare(b.purchasedAt)
-              else if (sortBy === 'alpha') cmp = a.description.localeCompare(b.description, 'de')
-              else if (sortBy === 'amount') cmp = a.amountCents - b.amountCents
-              return sortDir === 'asc' ? cmp : -cmp
-            })
-            .map((p) =>
-            editingId === p.id ? (
-               <EditTripPurchaseRow
-                 key={p.id}
-                 purchase={p}
-                 members={members}
-                 categories={categories}
-                 groupId={group.id}
-                 onSave={(data) => handleUpdate(p.id, data)}
-                 onCancel={() => setEditingId(null)}
-               />
-            ) : (
-              <div key={p.id} className="flex items-center justify-between rounded-lg border bg-card p-3">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{p.description}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {memberMap.get(p.paidByUserId)?.name ?? 'Unbekannt'}
-                    {p.categoryId && categoryMap.get(p.categoryId) && <> &middot; {categoryMap.get(p.categoryId)?.name}</>}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <p className="font-semibold tabular-nums text-sm">{formatCents(p.amountCents)}</p>
+        <div>
+          <div className="sticky top-0 z-20 -mx-4 mb-4 border-b bg-background/95 px-4 pb-3 pt-2 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                placeholder="Suche..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-40 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+              />
+              <select
+                value={`${sortBy}-${sortDir}`}
+                onChange={(e) => {
+                  const [by, dir] = e.target.value.split('-') as ['date' | 'alpha' | 'amount', 'asc' | 'desc']
+                  setSortBy(by)
+                  setSortDir(dir)
+                }}
+                className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="alpha-asc">A → Z</option>
+                <option value="alpha-desc">Z → A</option>
+                <option value="amount-desc">Betrag absteigend</option>
+                <option value="amount-asc">Betrag aufsteigend</option>
+                <option value="date-desc">Neueste zuerst</option>
+                <option value="date-asc">Älteste zuerst</option>
+              </select>
+              <button
+                onClick={() => {
+                  if (bulkEditMode && bulkDraftCount > 0 && !window.confirm('Ungespeicherte Änderungen verwerfen?')) {
+                    return
+                  }
+                  setBulkEditMode((prev) => !prev)
+                }}
+                className={`rounded-md px-2 py-1 text-xs font-medium ${
+                  bulkEditMode
+                    ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                    : 'bg-secondary text-secondary-foreground hover:bg-accent'
+                }`}
+              >
+                {bulkEditMode ? 'Listenansicht' : 'Zeilen bearbeiten'}
+              </button>
+              {bulkEditMode && (
+                <button
+                  onClick={() => setShowOnlyChanged((prev) => !prev)}
+                  className={`rounded-md px-2 py-1 text-xs font-medium ${
+                    showOnlyChanged
+                      ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                      : 'bg-secondary text-secondary-foreground hover:bg-accent'
+                  }`}
+                >
+                  Nur geändert
+                </button>
+              )}
+              <span className="text-xs text-muted-foreground">{filteredPurchases.length} Posten</span>
+              {bulkEditMode && bulkDraftCount > 0 && (
+                <>
                   <button
-                    onClick={() => setEditingId(p.id)}
-                    className="rounded p-1.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-                    title="Bearbeiten"
-                    aria-label="Bearbeiten"
+                    onClick={discardBulkDrafts}
+                    className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                    Verwerfen
                   </button>
                   <button
-                    onClick={() => handleDelete(p.id)}
-                    className="rounded p-1.5 text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-                    title="Löschen"
-                    aria-label="Löschen"
+                    onClick={saveBulkDrafts}
+                    className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                    Alle speichern ({bulkDraftCount})
                   </button>
-                </div>
+                </>
+              )}
+            </div>
+
+            {(searchQuery || showOnlyChanged) && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    Suche: {searchQuery} x
+                  </button>
+                )}
+                {showOnlyChanged && (
+                  <button
+                    onClick={() => setShowOnlyChanged(false)}
+                    className="rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    Nur geändert x
+                  </button>
+                )}
               </div>
-            )
-          )}
+            )}
+          </div>
+
+          <div className={bulkEditMode ? 'overflow-hidden rounded-lg border bg-card' : 'space-y-1'}>
+            {bulkEditMode && filteredPurchases.length > 0 && (
+              <div className="hidden border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid lg:grid-cols-[minmax(0,2fr)_120px_160px_140px] lg:gap-2">
+                <span>Beschreibung</span>
+                <span className="text-right">Betrag</span>
+                <span>Bezahlt von</span>
+                <span>Datum</span>
+              </div>
+            )}
+
+            {filteredPurchases.map((purchase) =>
+              bulkEditMode ? (
+                <PurchaseDraftRow
+                  key={purchase.id}
+                  purchase={purchase}
+                  value={bulkDrafts[purchase.id] ?? buildPurchaseEditValue(purchase)}
+                  dirty={purchase.id in bulkDrafts}
+                  members={members}
+                  categories={categories}
+                  trips={[]}
+                  groupId={group.id}
+                  allowExpand={false}
+                  showTrip={false}
+                  onChange={(data) => updateBulkDraft(purchase, { ...data, tripId: trip.id })}
+                  onDelete={() => handleDelete(purchase.id)}
+                  onCategoryCreated={handleCategoryCreated}
+                />
+              ) : (
+                <div key={purchase.id} className="flex items-center justify-between rounded-lg border bg-card p-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{purchase.description}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {memberMap.get(purchase.paidByUserId)?.name ?? 'Unbekannt'}
+                      {purchase.categoryId && categoryMap.get(purchase.categoryId) && <> &middot; {categoryMap.get(purchase.categoryId)?.name}</>}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-semibold tabular-nums text-sm">{formatCents(purchase.amountCents)}</p>
+                    <button
+                      onClick={() => setBulkEditMode(true)}
+                      className="rounded p-1.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                      title="Bearbeiten"
+                      aria-label="Bearbeiten"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                    </button>
+                    <button
+                      onClick={() => handleDelete(purchase.id)}
+                      className="rounded p-1.5 text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                      title="Löschen"
+                      aria-label="Löschen"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                    </button>
+                  </div>
+                </div>
+              )
+            )}
+
+            {bulkEditMode && filteredPurchases.length === 0 && (
+              <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+                {showOnlyChanged ? 'Keine geänderten Zeilen.' : 'Keine Posten gefunden.'}
+              </div>
+            )}
+          </div>
+
           <div className="flex justify-end border-t pt-2 mt-2">
             <p className="text-sm font-semibold tabular-nums">Gesamt: {formatCents(totalCents)}</p>
           </div>
         </div>
       )}
-    </div>
-  )
-}
 
-function EditTripPurchaseRow({
-  purchase,
-  members,
-  categories: initialCategories,
-  groupId,
-  onSave,
-  onCancel,
-}: {
-  purchase: PurchaseWithAssignments
-  members: Member[]
-  categories: Category[]
-  groupId: string
-  onSave: (data: { description: string; amountCents: number; paidByUserId: string; categoryId?: string; purchasedAt?: string; assignedTo: string[] }) => void
-  onCancel: () => void
-}) {
-  const [description, setDescription] = useState(purchase.description)
-  const [amount, setAmount] = useState((purchase.amountCents / 100).toFixed(2).replace('.', ','))
-  const [paidBy, setPaidBy] = useState(purchase.paidByUserId)
-  const [categoryId, setCategoryId] = useState(purchase.categoryId ?? '')
-  const [purchasedAt, setPurchasedAt] = useState(purchase.purchasedAt || '')
-  const [assignedTo, setAssignedTo] = useState(purchase.assignments.map((a) => a.userId))
-  const [saving, setSaving] = useState(false)
-  const [categories, setCategories] = useState(initialCategories)
-  const [newCategoryName, setNewCategoryName] = useState('')
-  const [showNewCategory, setShowNewCategory] = useState(false)
-
-  const handleCreateCategory = async () => {
-    if (!newCategoryName.trim()) return
-    const name = newCategoryName.trim()
-    const result = await api.createCategory(groupId, name)
-    const category: Category = { id: result.id, groupId, name }
-    setCategories((prev) => [...prev, category])
-    setCategoryId(result.id)
-    setNewCategoryName('')
-    setShowNewCategory(false)
-  }
-
-  const handleSave = async () => {
-    const cents = Math.round(parseFloat(amount.replace(',', '.')) * 100)
-    if (!description.trim() || isNaN(cents) || cents <= 0) return
-    setSaving(true)
-    try {
-      await onSave({ description: description.trim(), amountCents: cents, paidByUserId: paidBy, categoryId: categoryId || undefined, purchasedAt: purchasedAt || undefined, assignedTo })
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="rounded-lg border bg-card p-3 space-y-2">
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          className="flex-1 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-          placeholder="Beschreibung"
-        />
-        <input
-          type="text"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          className="w-24 rounded-md border bg-background px-2 py-1 text-sm text-right outline-none focus:ring-2 focus:ring-ring"
-          placeholder="0,00"
-        />
-      </div>
-      <div className="flex gap-2 items-center flex-wrap">
-        <select
-          value={paidBy}
-          onChange={(e) => setPaidBy(e.target.value)}
-          className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-        >
-          {members.map((m) => (
-            <option key={m.id} value={m.id}>{m.name}</option>
-          ))}
-        </select>
-        <input
-          type="date"
-          value={purchasedAt}
-          onChange={(e) => setPurchasedAt(e.target.value)}
-          className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-        />
-        <div className="flex items-center gap-1">
-          <select
-            value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value)}
-            className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-          >
-            <option value="">Keine Kategorie</option>
-            {categories.map((category) => (
-              <option key={category.id} value={category.id}>{category.name}</option>
-            ))}
-          </select>
-          {!showNewCategory ? (
-            <button type="button" onClick={() => setShowNewCategory(true)} className="text-xs text-muted-foreground hover:text-foreground">+</button>
-          ) : (
-            <div className="flex items-center gap-1">
-              <input
-                type="text"
-                value={newCategoryName}
-                onChange={(e) => setNewCategoryName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleCreateCategory()
-                }}
-                placeholder="Neue Kategorie"
-                className="w-28 rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-ring"
-                autoFocus
-              />
-              <button type="button" onClick={handleCreateCategory} className="text-xs text-primary hover:text-primary/80">OK</button>
+      {bulkEditMode && bulkDraftCount > 0 && (
+        <div className="sticky bottom-0 z-20 -mx-4 mt-4 border-t bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+          <div className="flex items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2 shadow-sm">
+            <p className="text-sm text-muted-foreground">{bulkDraftCount} Zeile(n) geändert</p>
+            <div className="flex gap-2">
               <button
-                type="button"
-                onClick={() => {
-                  setShowNewCategory(false)
-                  setNewCategoryName('')
-                }}
-                className="text-xs text-muted-foreground"
+                onClick={discardBulkDrafts}
+                className="rounded-md bg-secondary px-3 py-1.5 text-sm text-secondary-foreground hover:bg-accent"
               >
-                X
+                Verwerfen
+              </button>
+              <button
+                onClick={saveBulkDrafts}
+                className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                Alle speichern
               </button>
             </div>
-          )}
+          </div>
         </div>
-        <div className="flex flex-1 items-center gap-2 overflow-x-auto pb-1">
-          <button
-            type="button"
-            onClick={() => setAssignedTo(assignedTo.length === members.length ? [] : members.map((m) => m.id))}
-            className="shrink-0 rounded-md border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-          >
-            {assignedTo.length === members.length ? 'Keine' : 'Alle'}
-          </button>
-          {members.map((m) => (
-            <label key={m.id} className="flex shrink-0 cursor-pointer select-none items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-accent">
-              <input
-                type="checkbox"
-                checked={assignedTo.includes(m.id)}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    setAssignedTo((prev) => [...prev, m.id])
-                  } else {
-                    setAssignedTo((prev) => prev.filter((id) => id !== m.id))
-                  }
-                }}
-                className="h-4 w-4 rounded"
-              />
-              {m.name.split(' ')[0]}
-            </label>
-          ))}
-        </div>
-      </div>
-      <div className="flex gap-2 justify-end">
-        <button
-          onClick={onCancel}
-          className="rounded-md bg-secondary px-3 py-1 text-sm text-secondary-foreground hover:bg-accent"
-        >
-          Abbrechen
-        </button>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="rounded-md bg-primary px-3 py-1 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
-          {saving ? '...' : 'Speichern'}
-        </button>
-      </div>
+      )}
     </div>
   )
 }

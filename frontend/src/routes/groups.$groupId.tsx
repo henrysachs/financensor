@@ -5,6 +5,13 @@ import { useState, useEffect } from 'react'
 import { Pie, PieChart, Cell, Bar, BarChart, CartesianGrid, XAxis, YAxis, ReferenceLine } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { RouteError, RouteSkeleton } from '@/components/route-error'
+import { PurchaseDraftRow } from '@/components/purchase-draft-row'
+import {
+  applyPurchaseEditValue,
+  buildPurchaseEditValue,
+  isSamePurchaseEditValue,
+  type PurchaseEditValue,
+} from '@/lib/purchase-edit'
 
 export const Route = createFileRoute('/groups/$groupId')({
   beforeLoad: requireAuth,
@@ -279,39 +286,6 @@ function TripCard({
   )
 }
 
-type PurchaseUpdateData = {
-  description: string
-  amountCents: number
-  paidByUserId: string
-  categoryId?: string
-  tripId?: string
-  purchasedAt?: string
-  assignedTo: string[]
-}
-
-function buildPurchaseUpdateData(purchase: PurchaseWithAssignments): PurchaseUpdateData {
-  return {
-    description: purchase.description,
-    amountCents: purchase.amountCents,
-    paidByUserId: purchase.paidByUserId,
-    categoryId: purchase.categoryId,
-    tripId: purchase.tripId,
-    purchasedAt: purchase.purchasedAt,
-    assignedTo: purchase.assignments.map((assignment) => assignment.userId),
-  }
-}
-
-function isSamePurchaseUpdateData(left: PurchaseUpdateData, right: PurchaseUpdateData): boolean {
-  if (left.description !== right.description) return false
-  if (left.amountCents !== right.amountCents) return false
-  if (left.paidByUserId !== right.paidByUserId) return false
-  if (left.categoryId !== right.categoryId) return false
-  if (left.tripId !== right.tripId) return false
-  if (left.purchasedAt !== right.purchasedAt) return false
-  if (left.assignedTo.length !== right.assignedTo.length) return false
-  return left.assignedTo.every((userId, index) => userId === right.assignedTo[index])
-}
-
 function PurchasesView({
   groupId,
   purchases,
@@ -328,9 +302,8 @@ function PurchasesView({
   const memberMap = new Map(members.map((m) => [m.id, m]))
   const [localCategories, setLocalCategories] = useState(categories)
   const categoryMap = new Map(localCategories.map((c) => [c.id, c]))
-  const [editingId, setEditingId] = useState<string | null>(null)
   const [bulkEditMode, setBulkEditMode] = useState(false)
-  const [bulkDrafts, setBulkDrafts] = useState<Record<string, PurchaseUpdateData>>({})
+  const [bulkDrafts, setBulkDrafts] = useState<Record<string, PurchaseEditValue>>({})
   const [localPurchases, setLocalPurchases] = useState(purchases)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showOnlyChanged, setShowOnlyChanged] = useState(false)
@@ -366,7 +339,7 @@ function PurchasesView({
     try {
       const raw = window.localStorage.getItem(draftStorageKey)
       if (!raw) return
-      const parsed = JSON.parse(raw) as Record<string, PurchaseUpdateData>
+      const parsed = JSON.parse(raw) as Record<string, PurchaseEditValue>
       const validIds = new Set(localPurchases.map((purchase) => purchase.id))
       const next = Object.fromEntries(
         Object.entries(parsed).filter(([purchaseId]) => validIds.has(purchaseId))
@@ -407,38 +380,18 @@ function PurchasesView({
     withResolver: false,
   })
 
-  const buildAssignments = (purchase: PurchaseWithAssignments, assignedTo: string[]) =>
-    assignedTo.map((userId) => {
-      const existing = purchase.assignments.find((assignment) => assignment.userId === userId)
-      return {
-        id: existing?.id ?? crypto.randomUUID(),
-        purchaseId: purchase.id,
-        userId,
-        customShareCents: existing?.customShareCents,
-      }
-    })
-
   const buildUpdateData = (
     purchase: PurchaseWithAssignments,
-    overrides: Partial<PurchaseUpdateData> = {}
-  ): PurchaseUpdateData => ({
-    ...buildPurchaseUpdateData(purchase),
+    overrides: Partial<PurchaseEditValue> = {}
+  ): PurchaseEditValue => ({
+    ...buildPurchaseEditValue(purchase),
     ...overrides,
   })
 
   const applyLocalUpdate = (
     purchase: PurchaseWithAssignments,
-    data: PurchaseUpdateData
-  ) => ({
-    ...purchase,
-    description: data.description,
-    amountCents: data.amountCents,
-    paidByUserId: data.paidByUserId,
-    categoryId: data.categoryId,
-    tripId: data.tripId,
-    purchasedAt: data.purchasedAt ?? purchase.purchasedAt,
-    assignments: buildAssignments(purchase, data.assignedTo),
-  })
+    data: PurchaseEditValue
+  ) => applyPurchaseEditValue(purchase, data)
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -482,7 +435,7 @@ function PurchasesView({
   }
 
   const applyBulkUpdate = async (
-    makeData: (purchase: PurchaseWithAssignments) => PurchaseUpdateData
+    makeData: (purchase: PurchaseWithAssignments) => PurchaseEditValue
   ) => {
     const updates = Array.from(selectedIds)
       .map((id) => {
@@ -503,10 +456,10 @@ function PurchasesView({
     clearBulkState()
   }
 
-  const updateBulkDraft = (purchase: PurchaseWithAssignments, data: PurchaseUpdateData) => {
-    const original = buildPurchaseUpdateData(purchase)
+  const updateBulkDraft = (purchase: PurchaseWithAssignments, data: PurchaseEditValue) => {
+    const original = buildPurchaseEditValue(purchase)
     setBulkDrafts((prev) => {
-      if (isSamePurchaseUpdateData(data, original)) {
+      if (isSamePurchaseEditValue(data, original)) {
         const next = { ...prev }
         delete next[purchase.id]
         return next
@@ -578,16 +531,6 @@ function PurchasesView({
     setLocalCategories((prev) => [...prev, category])
   }
 
-  const handleUpdate = async (purchaseId: string, data: { description: string; amountCents: number; paidByUserId: string; categoryId?: string; tripId?: string; purchasedAt?: string; assignedTo: string[] }) => {
-    await api.updatePurchase(groupId, purchaseId, { ...data })
-    setLocalPurchases((prev) =>
-      prev.map((p) =>
-        p.id === purchaseId ? applyLocalUpdate(p, data) : p,
-      )
-    )
-    setEditingId(null)
-  }
-
   return (
     <div>
       {/* Search, filter, sort */}
@@ -632,7 +575,6 @@ function PurchasesView({
               return
             }
             setBulkEditMode((prev) => !prev)
-            setEditingId(null)
           }}
           className={`rounded-md px-2 py-1 text-xs font-medium ${
             bulkEditMode
@@ -835,10 +777,10 @@ function PurchasesView({
           )}
           {filteredPurchases.map((purchase) =>
             bulkEditMode ? (
-              <BulkEditPurchaseRow
+              <PurchaseDraftRow
                 key={purchase.id}
                 purchase={purchase}
-                value={bulkDrafts[purchase.id] ?? buildPurchaseUpdateData(purchase)}
+                value={bulkDrafts[purchase.id] ?? buildPurchaseEditValue(purchase)}
                 dirty={purchase.id in bulkDrafts}
                 members={members}
                 categories={localCategories}
@@ -846,18 +788,6 @@ function PurchasesView({
                 groupId={groupId}
                 onChange={(data) => updateBulkDraft(purchase, data)}
                 onDelete={() => handleDelete(purchase.id)}
-                onCategoryCreated={handleCategoryCreated}
-              />
-            ) : editingId === purchase.id ? (
-              <EditPurchaseRow
-                key={purchase.id}
-                purchase={purchase}
-                members={members}
-                categories={localCategories}
-                trips={trips}
-                groupId={groupId}
-                onSave={(data) => handleUpdate(purchase.id, data)}
-                onCancel={() => setEditingId(null)}
                 onCategoryCreated={handleCategoryCreated}
               />
             ) : (
@@ -868,7 +798,7 @@ function PurchasesView({
                 categoryName={purchase.categoryId ? categoryMap.get(purchase.categoryId)?.name : undefined}
                 selected={selectedIds.has(purchase.id)}
                 onToggleSelect={() => toggleSelect(purchase.id)}
-                onEdit={() => setEditingId(purchase.id)}
+                onEdit={() => setBulkEditMode(true)}
                 onDelete={() => handleDelete(purchase.id)}
               />
             )
@@ -969,421 +899,6 @@ function PurchaseRow({
           aria-label="Löschen"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function EditPurchaseRow({
-  purchase,
-  members,
-  categories,
-  trips,
-  groupId,
-  onSave,
-  onCancel,
-  onDelete,
-  onCategoryCreated,
-  showCancel = true,
-}: {
-  purchase: PurchaseWithAssignments
-  members: Member[]
-  categories: Category[]
-  trips: Trip[]
-  groupId: string
-  onSave: (data: { description: string; amountCents: number; paidByUserId: string; categoryId?: string; tripId?: string; purchasedAt?: string; assignedTo: string[] }) => void
-  onCancel?: () => void
-  onDelete?: () => void
-  onCategoryCreated?: (category: Category) => void
-  showCancel?: boolean
-}) {
-  const [description, setDescription] = useState(purchase.description)
-  const [amount, setAmount] = useState((purchase.amountCents / 100).toFixed(2).replace('.', ','))
-  const [paidBy, setPaidBy] = useState(purchase.paidByUserId)
-  const [tripId, setTripId] = useState(purchase.tripId ?? '')
-  const [categoryId, setCategoryId] = useState(purchase.categoryId ?? '')
-  const [purchasedAt, setPurchasedAt] = useState(purchase.purchasedAt || '')
-  const [assignedTo, setAssignedTo] = useState(purchase.assignments.map((a) => a.userId))
-  const [saving, setSaving] = useState(false)
-  const [newCategoryName, setNewCategoryName] = useState('')
-  const [showNewCategory, setShowNewCategory] = useState(false)
-
-  const toggleAllAssigned = () => {
-    if (assignedTo.length === members.length) {
-      setAssignedTo([])
-    } else {
-      setAssignedTo(members.map((m) => m.id))
-    }
-  }
-
-  const handleCreateCategory = async () => {
-    if (!newCategoryName.trim()) return
-    const result = await api.createCategory(groupId, newCategoryName.trim())
-    const newCat: Category = { id: result.id, groupId, name: newCategoryName.trim() }
-    onCategoryCreated?.(newCat)
-    setCategoryId(result.id)
-    setNewCategoryName('')
-    setShowNewCategory(false)
-  }
-
-  const handleSave = async () => {
-    const cents = Math.round(parseFloat(amount.replace(',', '.')) * 100)
-    if (!description.trim() || isNaN(cents) || cents <= 0) return
-    setSaving(true)
-    try {
-      await onSave({
-        description: description.trim(),
-        amountCents: cents,
-        paidByUserId: paidBy,
-        categoryId: categoryId || undefined,
-        tripId: tripId || undefined,
-        purchasedAt: purchasedAt || undefined,
-        assignedTo,
-      })
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="rounded-lg border bg-card p-3 space-y-2">
-      <div className="flex flex-col gap-2 lg:flex-row">
-        <input
-          type="text"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          className="flex-1 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-          placeholder="Beschreibung"
-        />
-        <input
-          type="text"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          className="w-full rounded-md border bg-background px-2 py-1 text-sm text-right outline-none focus:ring-2 focus:ring-ring lg:w-24"
-          placeholder="0,00"
-        />
-      </div>
-      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-        <select
-          value={paidBy}
-          onChange={(e) => setPaidBy(e.target.value)}
-          className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-        >
-          {members.map((m) => (
-            <option key={m.id} value={m.id}>{m.name}</option>
-          ))}
-        </select>
-        <input
-          type="date"
-          value={purchasedAt}
-          onChange={(e) => setPurchasedAt(e.target.value)}
-          className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-        />
-        <select
-          value={tripId}
-          onChange={(e) => setTripId(e.target.value)}
-          className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-        >
-          <option value="">Ohne Aktivität</option>
-          {trips.map((trip) => (
-            <option key={trip.id} value={trip.id}>{trip.name}</option>
-          ))}
-        </select>
-        <div className="flex items-center gap-1 min-w-0">
-          <select
-            value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value)}
-            className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-          >
-            <option value="">Keine Kategorie</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-          {!showNewCategory ? (
-            <button onClick={() => setShowNewCategory(true)} className="text-xs text-muted-foreground hover:text-foreground">+</button>
-          ) : (
-            <div className="flex items-center gap-1">
-              <input
-                type="text"
-                value={newCategoryName}
-                onChange={(e) => setNewCategoryName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCategory() }}
-                placeholder="Neue Kategorie"
-                className="w-28 rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-ring"
-                autoFocus
-              />
-              <button onClick={handleCreateCategory} className="text-xs text-primary hover:text-primary/80">OK</button>
-              <button onClick={() => setShowNewCategory(false)} className="text-xs text-muted-foreground">X</button>
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="rounded-md border bg-muted/30 p-3">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <p className="text-xs font-medium text-muted-foreground">Zuteilung</p>
-          <button onClick={toggleAllAssigned} className="shrink-0 rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
-            {assignedTo.length === members.length ? 'Keine' : 'Alle'}
-          </button>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {members.map((m) => (
-            <label key={m.id} className="flex cursor-pointer select-none items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm hover:bg-accent min-w-[140px]">
-              <input
-                type="checkbox"
-                checked={assignedTo.includes(m.id)}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    setAssignedTo((prev) => [...prev, m.id])
-                  } else {
-                    setAssignedTo((prev) => prev.filter((id) => id !== m.id))
-                  }
-                }}
-                className="h-4 w-4 rounded"
-              />
-              <span className="truncate">{m.name}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-      <div className="flex gap-2 justify-end">
-        {onDelete && (
-          <button
-            onClick={onDelete}
-            className="rounded-md bg-destructive px-3 py-1 text-sm text-destructive-foreground hover:bg-destructive/90"
-          >
-            Löschen
-          </button>
-        )}
-        {showCancel && onCancel && (
-          <button
-            onClick={onCancel}
-            className="rounded-md bg-secondary px-3 py-1 text-sm text-secondary-foreground hover:bg-accent"
-          >
-            Abbrechen
-          </button>
-        )}
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="rounded-md bg-primary px-3 py-1 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
-          {saving ? '...' : 'Speichern'}
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function BulkEditPurchaseRow({
-  purchase,
-  value,
-  dirty,
-  members,
-  categories,
-  trips,
-  groupId,
-  onChange,
-  onDelete,
-  onCategoryCreated,
-}: {
-  purchase: PurchaseWithAssignments
-  value: PurchaseUpdateData
-  dirty: boolean
-  members: Member[]
-  categories: Category[]
-  trips: Trip[]
-  groupId: string
-  onChange: (data: PurchaseUpdateData) => void
-  onDelete: () => void
-  onCategoryCreated?: (category: Category) => void
-}) {
-  const [newCategoryName, setNewCategoryName] = useState('')
-  const [showNewCategory, setShowNewCategory] = useState(false)
-  const [expanded, setExpanded] = useState(dirty)
-
-  useEffect(() => {
-    if (dirty) {
-      setExpanded(true)
-    }
-  }, [dirty])
-
-  const toggleAllAssigned = () => {
-    onChange({
-      ...value,
-      assignedTo: value.assignedTo.length === members.length ? [] : members.map((member) => member.id),
-    })
-  }
-
-  const handleCreateCategory = async () => {
-    if (!newCategoryName.trim()) return
-    const result = await api.createCategory(groupId, newCategoryName.trim())
-    const newCategory: Category = { id: result.id, groupId, name: newCategoryName.trim() }
-    onCategoryCreated?.(newCategory)
-    onChange({ ...value, categoryId: result.id })
-    setNewCategoryName('')
-    setShowNewCategory(false)
-  }
-
-  return (
-    <div className={`space-y-2 border-b px-3 py-3 last:border-b-0 ${dirty ? 'bg-primary/5' : 'bg-card/80'}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 text-[11px] text-muted-foreground">
-          <p className="truncate">{purchase.description}</p>
-          <p>
-            {new Date(purchase.purchasedAt || purchase.createdAt).toLocaleDateString('de-DE')}
-            {' '}
-            &middot; {value.assignedTo.length} Person(en)
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {dirty && <span className="rounded bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Geändert</span>}
-          {!dirty && (
-            <button
-              type="button"
-              onClick={() => setExpanded((prev) => !prev)}
-              className="rounded border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-            >
-              {expanded ? 'Weniger' : 'Mehr'}
-            </button>
-          )}
-        </div>
-      </div>
-      <div className="grid gap-2 lg:grid-cols-[minmax(0,2fr)_120px_160px_140px_180px] lg:items-start">
-        <div className="space-y-1">
-          <label className="text-[11px] font-medium text-muted-foreground lg:hidden">Beschreibung</label>
-          <input
-            type="text"
-            value={value.description}
-            onChange={(e) => onChange({ ...value, description: e.target.value })}
-            className="w-full rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-            placeholder="Beschreibung"
-          />
-        </div>
-        <div className="space-y-1">
-          <label className="text-[11px] font-medium text-muted-foreground lg:hidden">Betrag</label>
-          <input
-            type="text"
-            value={(value.amountCents / 100).toFixed(2).replace('.', ',')}
-            onChange={(e) => {
-              const cents = Math.round(parseFloat(e.target.value.replace(',', '.')) * 100)
-              onChange({ ...value, amountCents: Number.isNaN(cents) ? 0 : cents })
-            }}
-            className="w-full rounded-md border bg-muted/20 px-2 py-1 text-sm text-right font-medium tabular-nums outline-none focus:ring-2 focus:ring-ring"
-            placeholder="0,00"
-          />
-        </div>
-        <div className="space-y-1">
-          <label className="text-[11px] font-medium text-muted-foreground lg:hidden">Bezahlt von</label>
-          <select
-            value={value.paidByUserId}
-            onChange={(e) => onChange({ ...value, paidByUserId: e.target.value })}
-            className="w-full rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-          >
-            {members.map((member) => (
-              <option key={member.id} value={member.id}>{member.name}</option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-1">
-          <label className="text-[11px] font-medium text-muted-foreground lg:hidden">Datum</label>
-          <input
-            type="date"
-            value={value.purchasedAt || ''}
-            onChange={(e) => onChange({ ...value, purchasedAt: e.target.value || undefined })}
-            className="w-full rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-          />
-        </div>
-        <div className="grid gap-2">
-          <div className="space-y-1">
-            <label className="text-[11px] font-medium text-muted-foreground lg:hidden">Aktivität</label>
-            <select
-              value={value.tripId || ''}
-              onChange={(e) => onChange({ ...value, tripId: e.target.value || undefined })}
-              className="w-full rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="">Ohne Aktivität</option>
-              {trips.map((trip) => (
-                <option key={trip.id} value={trip.id}>{trip.name}</option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-[11px] font-medium text-muted-foreground lg:hidden">Kategorie</label>
-            <div className="flex items-center gap-1 min-w-0">
-              <select
-                value={value.categoryId || ''}
-                onChange={(e) => onChange({ ...value, categoryId: e.target.value || undefined })}
-                className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-              >
-                <option value="">Keine Kategorie</option>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>{category.name}</option>
-                ))}
-              </select>
-              {!showNewCategory ? (
-                <button type="button" onClick={() => setShowNewCategory(true)} className="text-xs text-muted-foreground hover:text-foreground">+</button>
-              ) : (
-                <div className="flex items-center gap-1">
-                  <input
-                    type="text"
-                    value={newCategoryName}
-                    onChange={(e) => setNewCategoryName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleCreateCategory()
-                    }}
-                    placeholder="Neue Kategorie"
-                    className="w-28 rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-ring"
-                    autoFocus
-                  />
-                  <button type="button" onClick={handleCreateCategory} className="text-xs text-primary hover:text-primary/80">OK</button>
-                  <button type="button" onClick={() => setShowNewCategory(false)} className="text-xs text-muted-foreground">X</button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-      {(expanded || dirty) ? (
-        <div className="rounded-md border bg-muted/30 p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="text-xs font-medium text-muted-foreground">Zuteilung</p>
-            <button onClick={toggleAllAssigned} className="shrink-0 rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
-              {value.assignedTo.length === members.length ? 'Keine' : 'Alle'}
-            </button>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {members.map((member) => (
-              <label key={member.id} className="flex min-h-[44px] cursor-pointer items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm hover:bg-accent">
-                <input
-                  type="checkbox"
-                  checked={value.assignedTo.includes(member.id)}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      onChange({ ...value, assignedTo: [...value.assignedTo, member.id] })
-                      return
-                    }
-                    onChange({ ...value, assignedTo: value.assignedTo.filter((id) => id !== member.id) })
-                  }}
-                  className="h-4 w-4 rounded"
-                />
-                <span className="truncate">{member.name}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-          {value.assignedTo.length} von {members.length} Personen zugeteilt
-        </div>
-      )}
-      <div className="flex justify-end">
-        <button
-          onClick={onDelete}
-          className="rounded-md bg-destructive px-3 py-1.5 text-sm text-destructive-foreground hover:bg-destructive/90"
-        >
-          Löschen
         </button>
       </div>
     </div>
