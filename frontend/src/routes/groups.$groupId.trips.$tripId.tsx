@@ -39,6 +39,8 @@ function TripDetailPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'date' | 'alpha' | 'amount'>('alpha')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingDraft, setEditingDraft] = useState<PurchaseEditValue | null>(null)
   const [bulkEditMode, setBulkEditMode] = useState(false)
   const [showOnlyChanged, setShowOnlyChanged] = useState(false)
   const [bulkDrafts, setBulkDrafts] = useState<Record<string, PurchaseEditValue>>({})
@@ -199,6 +201,33 @@ function TripDetailPage() {
 
   const handleCategoryCreated = (category: Category) => {
     setCategories((prev) => [...prev, category])
+  }
+
+  const startSingleEdit = (purchase: PurchaseWithAssignments) => {
+    if (bulkEditMode && bulkDraftCount > 0 && !window.confirm('Ungespeicherte Änderungen verwerfen?')) {
+      return
+    }
+    setBulkEditMode(false)
+    setEditingId(purchase.id)
+    setEditingDraft({ ...buildPurchaseEditValue(purchase), tripId: trip.id })
+  }
+
+  const cancelSingleEdit = () => {
+    setEditingId(null)
+    setEditingDraft(null)
+  }
+
+  const saveSingleEdit = async () => {
+    if (!editingId || !editingDraft) return
+    await api.updatePurchase(group.id, editingId, { ...editingDraft, tripId: trip.id })
+    setLocalPurchases((prev) =>
+      prev.map((purchase) =>
+        purchase.id === editingId
+          ? applyPurchaseEditValue(purchase, { ...editingDraft, tripId: trip.id })
+          : purchase
+      )
+    )
+    cancelSingleEdit()
   }
 
   return (
@@ -363,6 +392,7 @@ function TripDetailPage() {
                   if (bulkEditMode && bulkDraftCount > 0 && !window.confirm('Ungespeicherte Änderungen verwerfen?')) {
                     return
                   }
+                  cancelSingleEdit()
                   setBulkEditMode((prev) => !prev)
                 }}
                 className={`rounded-md px-2 py-1 text-xs font-medium ${
@@ -453,6 +483,39 @@ function TripDetailPage() {
                   onDelete={() => handleDelete(purchase.id)}
                   onCategoryCreated={handleCategoryCreated}
                 />
+              ) : editingId === purchase.id && editingDraft ? (
+                <PurchaseDraftRow
+                  key={purchase.id}
+                  purchase={purchase}
+                  value={editingDraft}
+                  dirty={!isSamePurchaseEditValue(editingDraft, { ...buildPurchaseEditValue(purchase), tripId: trip.id })}
+                  members={members}
+                  categories={categories}
+                  trips={[]}
+                  groupId={group.id}
+                  allowExpand={false}
+                  showTrip={false}
+                  showDelete={false}
+                  onChange={(data) => setEditingDraft({ ...data, tripId: trip.id })}
+                  onDelete={() => handleDelete(purchase.id)}
+                  onCategoryCreated={handleCategoryCreated}
+                  actions={(
+                    <>
+                      <button
+                        onClick={cancelSingleEdit}
+                        className="rounded-md bg-secondary px-3 py-1.5 text-sm text-secondary-foreground hover:bg-accent"
+                      >
+                        Abbrechen
+                      </button>
+                      <button
+                        onClick={saveSingleEdit}
+                        className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                      >
+                        Speichern
+                      </button>
+                    </>
+                  )}
+                />
               ) : (
                 <div key={purchase.id} className="flex items-center justify-between rounded-lg border bg-card p-3">
                   <div className="flex-1 min-w-0">
@@ -465,7 +528,7 @@ function TripDetailPage() {
                   <div className="flex items-center gap-2">
                     <p className="font-semibold tabular-nums text-sm">{formatCents(purchase.amountCents)}</p>
                     <button
-                      onClick={() => setBulkEditMode(true)}
+                      onClick={() => startSingleEdit(purchase)}
                       className="rounded p-1.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                       title="Bearbeiten"
                       aria-label="Bearbeiten"

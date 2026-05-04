@@ -302,6 +302,8 @@ function PurchasesView({
   const memberMap = new Map(members.map((m) => [m.id, m]))
   const [localCategories, setLocalCategories] = useState(categories)
   const categoryMap = new Map(localCategories.map((c) => [c.id, c]))
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingDraft, setEditingDraft] = useState<PurchaseEditValue | null>(null)
   const [bulkEditMode, setBulkEditMode] = useState(false)
   const [bulkDrafts, setBulkDrafts] = useState<Record<string, PurchaseEditValue>>({})
   const [localPurchases, setLocalPurchases] = useState(purchases)
@@ -531,6 +533,31 @@ function PurchasesView({
     setLocalCategories((prev) => [...prev, category])
   }
 
+  const startSingleEdit = (purchase: PurchaseWithAssignments) => {
+    if (bulkEditMode && bulkDraftCount > 0 && !window.confirm('Ungespeicherte Änderungen verwerfen?')) {
+      return
+    }
+    setBulkEditMode(false)
+    setEditingId(purchase.id)
+    setEditingDraft(buildPurchaseEditValue(purchase))
+  }
+
+  const cancelSingleEdit = () => {
+    setEditingId(null)
+    setEditingDraft(null)
+  }
+
+  const saveSingleEdit = async () => {
+    if (!editingId || !editingDraft) return
+    await api.updatePurchase(groupId, editingId, editingDraft)
+    setLocalPurchases((prev) =>
+      prev.map((purchase) =>
+        purchase.id === editingId ? applyLocalUpdate(purchase, editingDraft) : purchase
+      )
+    )
+    cancelSingleEdit()
+  }
+
   return (
     <div>
       {/* Search, filter, sort */}
@@ -574,6 +601,7 @@ function PurchasesView({
             if (bulkEditMode && bulkDraftCount > 0 && !window.confirm('Ungespeicherte Änderungen verwerfen?')) {
               return
             }
+            cancelSingleEdit()
             setBulkEditMode((prev) => !prev)
           }}
           className={`rounded-md px-2 py-1 text-xs font-medium ${
@@ -790,6 +818,38 @@ function PurchasesView({
                 onDelete={() => handleDelete(purchase.id)}
                 onCategoryCreated={handleCategoryCreated}
               />
+            ) : editingId === purchase.id && editingDraft ? (
+              <PurchaseDraftRow
+                key={purchase.id}
+                purchase={purchase}
+                value={editingDraft}
+                dirty={!isSamePurchaseEditValue(editingDraft, buildPurchaseEditValue(purchase))}
+                members={members}
+                categories={localCategories}
+                trips={trips}
+                groupId={groupId}
+                allowExpand={false}
+                showDelete={false}
+                onChange={setEditingDraft}
+                onDelete={() => handleDelete(purchase.id)}
+                onCategoryCreated={handleCategoryCreated}
+                actions={(
+                  <>
+                    <button
+                      onClick={cancelSingleEdit}
+                      className="rounded-md bg-secondary px-3 py-1.5 text-sm text-secondary-foreground hover:bg-accent"
+                    >
+                      Abbrechen
+                    </button>
+                    <button
+                      onClick={saveSingleEdit}
+                      className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                    >
+                      Speichern
+                    </button>
+                  </>
+                )}
+              />
             ) : (
               <PurchaseRow
                 key={purchase.id}
@@ -798,7 +858,7 @@ function PurchasesView({
                 categoryName={purchase.categoryId ? categoryMap.get(purchase.categoryId)?.name : undefined}
                 selected={selectedIds.has(purchase.id)}
                 onToggleSelect={() => toggleSelect(purchase.id)}
-                onEdit={() => setBulkEditMode(true)}
+                onEdit={() => startSingleEdit(purchase)}
                 onDelete={() => handleDelete(purchase.id)}
               />
             )

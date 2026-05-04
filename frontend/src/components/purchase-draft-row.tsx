@@ -17,6 +17,8 @@ export function PurchaseDraftRow({
   onCategoryCreated,
   allowExpand = true,
   showTrip = true,
+  showDelete = true,
+  actions,
 }: {
   purchase: PurchaseWithAssignments
   value: PurchaseEditValue
@@ -30,6 +32,8 @@ export function PurchaseDraftRow({
   onCategoryCreated?: (category: Category) => void
   allowExpand?: boolean
   showTrip?: boolean
+  showDelete?: boolean
+  actions?: React.ReactNode
 }) {
   const [newCategoryName, setNewCategoryName] = useState('')
   const [showNewCategory, setShowNewCategory] = useState(false)
@@ -183,13 +187,16 @@ export function PurchaseDraftRow({
         onChange={(assignedTo) => onChange({ ...value, assignedTo })}
       />
 
-      <div className="flex justify-end">
-        <button
-          onClick={onDelete}
-          className="rounded-md bg-destructive px-3 py-1.5 text-sm text-destructive-foreground hover:bg-destructive/90"
-        >
-          Löschen
-        </button>
+      <div className="flex justify-end gap-2">
+        {showDelete && (
+          <button
+            onClick={onDelete}
+            className="rounded-md bg-destructive px-3 py-1.5 text-sm text-destructive-foreground hover:bg-destructive/90"
+          >
+            Löschen
+          </button>
+        )}
+        {actions}
       </div>
     </div>
   )
