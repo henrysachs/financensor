@@ -1,3 +1,10 @@
+# [0.8.0](https://github.com/henrysachs/financensor/compare/v0.7.0...v0.8.0) (2026-05-04)
+
+
+### Features
+
+* add single purchase row editing ([02672a7](https://github.com/henrysachs/financensor/commit/02672a787d7a6dcbe580bd019dad5c6b78aabed0))
+
 # [0.7.0](https://github.com/henrysachs/financensor/compare/v0.6.0...v0.7.0) (2026-05-04)
 
 
