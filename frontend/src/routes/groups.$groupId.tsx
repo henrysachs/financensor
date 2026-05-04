@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, useMatchRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Outlet, useMatchRoute, Link, useBlocker } from '@tanstack/react-router'
 import { api, type Member, type PurchaseWithAssignments, type Category, type Trip } from '@/lib/api'
 import { requireAuth } from '@/lib/auth'
 import { useState, useEffect } from 'react'
@@ -279,6 +279,39 @@ function TripCard({
   )
 }
 
+type PurchaseUpdateData = {
+  description: string
+  amountCents: number
+  paidByUserId: string
+  categoryId?: string
+  tripId?: string
+  purchasedAt?: string
+  assignedTo: string[]
+}
+
+function buildPurchaseUpdateData(purchase: PurchaseWithAssignments): PurchaseUpdateData {
+  return {
+    description: purchase.description,
+    amountCents: purchase.amountCents,
+    paidByUserId: purchase.paidByUserId,
+    categoryId: purchase.categoryId,
+    tripId: purchase.tripId,
+    purchasedAt: purchase.purchasedAt,
+    assignedTo: purchase.assignments.map((assignment) => assignment.userId),
+  }
+}
+
+function isSamePurchaseUpdateData(left: PurchaseUpdateData, right: PurchaseUpdateData): boolean {
+  if (left.description !== right.description) return false
+  if (left.amountCents !== right.amountCents) return false
+  if (left.paidByUserId !== right.paidByUserId) return false
+  if (left.categoryId !== right.categoryId) return false
+  if (left.tripId !== right.tripId) return false
+  if (left.purchasedAt !== right.purchasedAt) return false
+  if (left.assignedTo.length !== right.assignedTo.length) return false
+  return left.assignedTo.every((userId, index) => userId === right.assignedTo[index])
+}
+
 function PurchasesView({
   groupId,
   purchases,
@@ -293,22 +326,30 @@ function PurchasesView({
   trips: Trip[]
 }) {
   const memberMap = new Map(members.map((m) => [m.id, m]))
-  const categoryMap = new Map(categories.map((c) => [c.id, c]))
+  const [localCategories, setLocalCategories] = useState(categories)
+  const categoryMap = new Map(localCategories.map((c) => [c.id, c]))
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [bulkEditMode, setBulkEditMode] = useState(false)
+  const [bulkDrafts, setBulkDrafts] = useState<Record<string, PurchaseUpdateData>>({})
   const [localPurchases, setLocalPurchases] = useState(purchases)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showOnlyChanged, setShowOnlyChanged] = useState(false)
+  const [bulkToolbarExpanded, setBulkToolbarExpanded] = useState(true)
   const [filterCategoryId, setFilterCategoryId] = useState<string | ''>('')
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'date' | 'alpha' | 'amount'>('date')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const [bulkAction, setBulkAction] = useState<'delete' | 'move' | 'paidby' | 'category' | null>(null)
+  const [bulkAction, setBulkAction] = useState<'delete' | 'move' | 'paidby' | 'category' | 'date' | 'assigned' | null>(null)
   const [bulkTripId, setBulkTripId] = useState('')
   const [bulkPaidBy, setBulkPaidBy] = useState('')
   const [bulkCategoryId, setBulkCategoryId] = useState('')
+  const [bulkPurchasedAt, setBulkPurchasedAt] = useState('')
+  const [bulkAssignedTo, setBulkAssignedTo] = useState(members.map((member) => member.id))
 
   const filteredPurchases = localPurchases
     .filter((p) => !filterCategoryId || p.categoryId === filterCategoryId)
     .filter((p) => !searchQuery || p.description.toLowerCase().includes(searchQuery.toLowerCase()))
+    .filter((p) => !showOnlyChanged || p.id in bulkDrafts)
     .sort((a, b) => {
       let cmp = 0
       if (sortBy === 'date') cmp = a.purchasedAt.localeCompare(b.purchasedAt)
@@ -316,6 +357,88 @@ function PurchasesView({
       else if (sortBy === 'amount') cmp = a.amountCents - b.amountCents
       return sortDir === 'asc' ? cmp : -cmp
     })
+
+  const selectedFilteredCount = filteredPurchases.filter((purchase) => selectedIds.has(purchase.id)).length
+  const bulkDraftCount = Object.keys(bulkDrafts).length
+  const draftStorageKey = `bulk-edit-drafts:${groupId}`
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(draftStorageKey)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as Record<string, PurchaseUpdateData>
+      const validIds = new Set(localPurchases.map((purchase) => purchase.id))
+      const next = Object.fromEntries(
+        Object.entries(parsed).filter(([purchaseId]) => validIds.has(purchaseId))
+      )
+      if (Object.keys(next).length > 0) {
+        setBulkDrafts(next)
+        setBulkEditMode(true)
+      }
+    } catch {
+      window.localStorage.removeItem(draftStorageKey)
+    }
+  }, [draftStorageKey, localPurchases])
+
+  useEffect(() => {
+    if (bulkDraftCount === 0) {
+      window.localStorage.removeItem(draftStorageKey)
+      return
+    }
+    window.localStorage.setItem(draftStorageKey, JSON.stringify(bulkDrafts))
+  }, [bulkDraftCount, bulkDrafts, draftStorageKey])
+
+  useEffect(() => {
+    if (bulkDraftCount === 0) return
+
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [bulkDraftCount])
+
+  useBlocker({
+    shouldBlockFn: () => bulkDraftCount > 0 && !window.confirm('Ungespeicherte Änderungen verwerfen?'),
+    enableBeforeUnload: false,
+    disabled: bulkDraftCount === 0,
+    withResolver: false,
+  })
+
+  const buildAssignments = (purchase: PurchaseWithAssignments, assignedTo: string[]) =>
+    assignedTo.map((userId) => {
+      const existing = purchase.assignments.find((assignment) => assignment.userId === userId)
+      return {
+        id: existing?.id ?? crypto.randomUUID(),
+        purchaseId: purchase.id,
+        userId,
+        customShareCents: existing?.customShareCents,
+      }
+    })
+
+  const buildUpdateData = (
+    purchase: PurchaseWithAssignments,
+    overrides: Partial<PurchaseUpdateData> = {}
+  ): PurchaseUpdateData => ({
+    ...buildPurchaseUpdateData(purchase),
+    ...overrides,
+  })
+
+  const applyLocalUpdate = (
+    purchase: PurchaseWithAssignments,
+    data: PurchaseUpdateData
+  ) => ({
+    ...purchase,
+    description: data.description,
+    amountCents: data.amountCents,
+    paidByUserId: data.paidByUserId,
+    categoryId: data.categoryId,
+    tripId: data.tripId,
+    purchasedAt: data.purchasedAt ?? purchase.purchasedAt,
+    assignments: buildAssignments(purchase, data.assignedTo),
+  })
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -327,108 +450,139 @@ function PurchasesView({
   }
 
   const toggleAll = () => {
-    if (selectedIds.size === filteredPurchases.length) {
-      setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(filteredPurchases.map((p) => p.id)))
-    }
-  }
-
-  const handleBulkDelete = async () => {
-    if (!confirm(`${selectedIds.size} Ausgaben löschen?`)) return
-    await Promise.all(Array.from(selectedIds).map((id) => api.deletePurchase(groupId, id)))
-    setLocalPurchases((prev) => prev.filter((p) => !selectedIds.has(p.id)))
-    setSelectedIds(new Set())
-  }
-
-  const handleBulkMoveToTrip = async () => {
-    if (!bulkTripId) return
-    await Promise.all(
-      Array.from(selectedIds).map((id) => {
-        const p = localPurchases.find((x) => x.id === id)
-        if (!p) return Promise.resolve()
-        return api.updatePurchase(groupId, id, {
-          description: p.description,
-          amountCents: p.amountCents,
-          paidByUserId: p.paidByUserId,
-          categoryId: p.categoryId,
-          tripId: bulkTripId,
-          purchasedAt: p.purchasedAt,
-          assignedTo: p.assignments.map((a) => a.userId),
-        })
+    if (filteredPurchases.length === 0) return
+    if (selectedFilteredCount === filteredPurchases.length) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        filteredPurchases.forEach((purchase) => next.delete(purchase.id))
+        return next
       })
-    )
-    setLocalPurchases((prev) =>
-      prev.map((p) => (selectedIds.has(p.id) ? { ...p, tripId: bulkTripId } : p))
-    )
+      return
+    }
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      filteredPurchases.forEach((purchase) => next.add(purchase.id))
+      return next
+    })
+  }
+
+  const clearBulkState = () => {
     setSelectedIds(new Set())
     setBulkAction(null)
     setBulkTripId('')
-  }
-
-  const handleBulkChangePaidBy = async () => {
-    if (!bulkPaidBy) return
-    await Promise.all(
-      Array.from(selectedIds).map((id) => {
-        const p = localPurchases.find((x) => x.id === id)
-        if (!p) return Promise.resolve()
-        return api.updatePurchase(groupId, id, {
-          description: p.description,
-          amountCents: p.amountCents,
-          paidByUserId: bulkPaidBy,
-          categoryId: p.categoryId,
-          tripId: p.tripId,
-          purchasedAt: p.purchasedAt,
-          assignedTo: p.assignments.map((a) => a.userId),
-        })
-      })
-    )
-    setLocalPurchases((prev) =>
-      prev.map((p) => (selectedIds.has(p.id) ? { ...p, paidByUserId: bulkPaidBy } : p))
-    )
-    setSelectedIds(new Set())
-    setBulkAction(null)
     setBulkPaidBy('')
+    setBulkCategoryId('')
+    setBulkPurchasedAt('')
+    setBulkAssignedTo(members.map((member) => member.id))
   }
 
-  const handleBulkChangeCategory = async () => {
-    const categoryValue = bulkCategoryId || undefined
-    await Promise.all(
-      Array.from(selectedIds).map((id) => {
-        const p = localPurchases.find((x) => x.id === id)
-        if (!p) return Promise.resolve()
-        return api.updatePurchase(groupId, id, {
-          description: p.description,
-          amountCents: p.amountCents,
-          paidByUserId: p.paidByUserId,
-          categoryId: categoryValue,
-          tripId: p.tripId,
-          purchasedAt: p.purchasedAt,
-          assignedTo: p.assignments.map((a) => a.userId),
-        })
+  const discardBulkDrafts = () => {
+    setBulkDrafts({})
+    window.localStorage.removeItem(draftStorageKey)
+  }
+
+  const applyBulkUpdate = async (
+    makeData: (purchase: PurchaseWithAssignments) => PurchaseUpdateData
+  ) => {
+    const updates = Array.from(selectedIds)
+      .map((id) => {
+        const purchase = localPurchases.find((item) => item.id === id)
+        if (!purchase) return null
+        return { id, data: makeData(purchase) }
+      })
+      .filter((update): update is { id: string; data: ReturnType<typeof makeData> } => update !== null)
+
+    await Promise.all(updates.map((update) => api.updatePurchase(groupId, update.id, update.data)))
+
+    setLocalPurchases((prev) =>
+      prev.map((purchase) => {
+        const update = updates.find((item) => item.id === purchase.id)
+        return update ? applyLocalUpdate(purchase, update.data) : purchase
       })
     )
+    clearBulkState()
+  }
+
+  const updateBulkDraft = (purchase: PurchaseWithAssignments, data: PurchaseUpdateData) => {
+    const original = buildPurchaseUpdateData(purchase)
+    setBulkDrafts((prev) => {
+      if (isSamePurchaseUpdateData(data, original)) {
+        const next = { ...prev }
+        delete next[purchase.id]
+        return next
+      }
+      return { ...prev, [purchase.id]: data }
+    })
+  }
+
+  const saveBulkDrafts = async () => {
+    const updates = Object.entries(bulkDrafts)
+    await Promise.all(updates.map(([purchaseId, data]) => api.updatePurchase(groupId, purchaseId, data)))
     setLocalPurchases((prev) =>
-      prev.map((p) => (selectedIds.has(p.id) ? { ...p, categoryId: categoryValue } : p))
+      prev.map((purchase) => {
+        const data = bulkDrafts[purchase.id]
+        return data ? applyLocalUpdate(purchase, data) : purchase
+      })
     )
-    setSelectedIds(new Set())
-    setBulkAction(null)
-    setBulkCategoryId('')
+    setBulkDrafts({})
+    window.localStorage.removeItem(draftStorageKey)
   }
 
   const handleDelete = async (purchaseId: string) => {
     if (!confirm('Ausgabe wirklich löschen?')) return
     await api.deletePurchase(groupId, purchaseId)
     setLocalPurchases((prev) => prev.filter((p) => p.id !== purchaseId))
+    setBulkDrafts((prev) => {
+      const next = { ...prev }
+      delete next[purchaseId]
+      return next
+    })
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      next.delete(purchaseId)
+      return next
+    })
+  }
+
+  const handleBulkDelete = async () => {
+    if (!confirm(`${selectedIds.size} Ausgaben löschen?`)) return
+    await Promise.all(Array.from(selectedIds).map((id) => api.deletePurchase(groupId, id)))
+    setLocalPurchases((prev) => prev.filter((purchase) => !selectedIds.has(purchase.id)))
+    clearBulkState()
+  }
+
+  const handleBulkMoveToTrip = async () => {
+    if (!bulkTripId) return
+    await applyBulkUpdate((purchase) => buildUpdateData(purchase, { tripId: bulkTripId }))
+  }
+
+  const handleBulkChangePaidBy = async () => {
+    if (!bulkPaidBy) return
+    await applyBulkUpdate((purchase) => buildUpdateData(purchase, { paidByUserId: bulkPaidBy }))
+  }
+
+  const handleBulkChangeCategory = async () => {
+    await applyBulkUpdate((purchase) => buildUpdateData(purchase, { categoryId: bulkCategoryId || undefined }))
+  }
+
+  const handleBulkChangeDate = async () => {
+    if (!bulkPurchasedAt) return
+    await applyBulkUpdate((purchase) => buildUpdateData(purchase, { purchasedAt: bulkPurchasedAt }))
+  }
+
+  const handleBulkChangeAssignedTo = async () => {
+    await applyBulkUpdate((purchase) => buildUpdateData(purchase, { assignedTo: bulkAssignedTo }))
+  }
+
+  const handleCategoryCreated = (category: Category) => {
+    setLocalCategories((prev) => [...prev, category])
   }
 
   const handleUpdate = async (purchaseId: string, data: { description: string; amountCents: number; paidByUserId: string; categoryId?: string; tripId?: string; purchasedAt?: string; assignedTo: string[] }) => {
     await api.updatePurchase(groupId, purchaseId, { ...data })
     setLocalPurchases((prev) =>
       prev.map((p) =>
-        p.id === purchaseId
-          ? { ...p, description: data.description, amountCents: data.amountCents, paidByUserId: data.paidByUserId, categoryId: data.categoryId, tripId: data.tripId, purchasedAt: data.purchasedAt ?? p.purchasedAt }
-          : p
+        p.id === purchaseId ? applyLocalUpdate(p, data) : p,
       )
     )
     setEditingId(null)
@@ -437,7 +591,8 @@ function PurchasesView({
   return (
     <div>
       {/* Search, filter, sort */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="sticky top-0 z-20 -mx-4 mb-4 border-b bg-background/95 px-4 pb-3 pt-2 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="flex flex-wrap items-center gap-2">
         <input
           type="text"
           placeholder="Suche..."
@@ -451,7 +606,7 @@ function PurchasesView({
           className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
         >
           <option value="">Alle Kategorien</option>
-          {categories.map((c) => (
+          {localCategories.map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
@@ -471,60 +626,190 @@ function PurchasesView({
           <option value="amount-desc">Betrag absteigend</option>
           <option value="amount-asc">Betrag aufsteigend</option>
         </select>
+        <button
+          onClick={() => {
+            if (bulkEditMode && bulkDraftCount > 0 && !window.confirm('Ungespeicherte Änderungen verwerfen?')) {
+              return
+            }
+            setBulkEditMode((prev) => !prev)
+            setEditingId(null)
+          }}
+          className={`rounded-md px-2 py-1 text-xs font-medium ${
+            bulkEditMode
+              ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+              : 'bg-secondary text-secondary-foreground hover:bg-accent'
+          }`}
+        >
+          {bulkEditMode ? 'Listenansicht' : 'Zeilen bearbeiten'}
+        </button>
         {filteredPurchases.length > 0 && (
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <input type="checkbox" checked={selectedIds.size === filteredPurchases.length && filteredPurchases.length > 0} onChange={toggleAll} className="rounded" />
+            <input type="checkbox" checked={selectedFilteredCount === filteredPurchases.length && filteredPurchases.length > 0} onChange={toggleAll} className="rounded" />
             Alle
           </label>
         )}
+        {bulkEditMode && (
+          <button
+            onClick={() => setShowOnlyChanged((prev) => !prev)}
+            className={`rounded-md px-2 py-1 text-xs font-medium ${
+              showOnlyChanged
+                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                : 'bg-secondary text-secondary-foreground hover:bg-accent'
+            }`}
+          >
+            Nur geändert
+          </button>
+        )}
         <span className="text-xs text-muted-foreground">{filteredPurchases.length} Einträge</span>
-      </div>
-
-      {/* Bulk action toolbar */}
-      {selectedIds.size > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 p-3">
-          <span className="text-sm font-medium">{selectedIds.size} ausgewählt</span>
-          <button onClick={handleBulkDelete} className="rounded-md bg-destructive px-2 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90">
-            Löschen
-          </button>
-          <button onClick={() => setBulkAction('move')} className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent">
-            Verschieben
-          </button>
-          <button onClick={() => setBulkAction('paidby')} className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent">
-            Bezahlt von
-          </button>
-          <button onClick={() => setBulkAction('category')} className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent">
-            Kategorie
-          </button>
-          {bulkAction === 'move' && (
-            <div className="flex items-center gap-1">
-              <select value={bulkTripId} onChange={(e) => setBulkTripId(e.target.value)} className="rounded-md border bg-background px-2 py-1 text-xs">
-                <option value="">Aktivität wählen...</option>
-                {trips.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-              <button onClick={handleBulkMoveToTrip} disabled={!bulkTripId} className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50">OK</button>
-            </div>
-          )}
-          {bulkAction === 'paidby' && (
-            <div className="flex items-center gap-1">
-              <select value={bulkPaidBy} onChange={(e) => setBulkPaidBy(e.target.value)} className="rounded-md border bg-background px-2 py-1 text-xs">
-                <option value="">Person wählen...</option>
-                {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </select>
-              <button onClick={handleBulkChangePaidBy} disabled={!bulkPaidBy} className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50">OK</button>
-            </div>
-          )}
-          {bulkAction === 'category' && (
-            <div className="flex items-center gap-1">
-              <select value={bulkCategoryId} onChange={(e) => setBulkCategoryId(e.target.value)} className="rounded-md border bg-background px-2 py-1 text-xs">
-                <option value="">Keine Kategorie</option>
-                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              <button onClick={handleBulkChangeCategory} className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground">OK</button>
-            </div>
-          )}
+        {bulkEditMode && bulkDraftCount > 0 && (
+          <>
+            <button
+              onClick={discardBulkDrafts}
+              className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent"
+            >
+              Verwerfen
+            </button>
+            <button
+              onClick={saveBulkDrafts}
+              className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              Alle speichern ({bulkDraftCount})
+            </button>
+          </>
+        )}
         </div>
-      )}
+
+        {(searchQuery || filterCategoryId || showOnlyChanged) && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                Suche: {searchQuery} x
+              </button>
+            )}
+            {filterCategoryId && (
+              <button
+                onClick={() => setFilterCategoryId('')}
+                className="rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                Kategorie: {categoryMap.get(filterCategoryId)?.name ?? 'Unbekannt'} x
+              </button>
+            )}
+            {showOnlyChanged && (
+              <button
+                onClick={() => setShowOnlyChanged(false)}
+                className="rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                Nur geändert x
+              </button>
+            )}
+          </div>
+        )}
+
+        {selectedIds.size > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 p-3">
+            <div className="flex w-full items-center justify-between gap-2">
+              <span className="text-sm font-medium">{selectedIds.size} ausgewählt</span>
+              <button
+                onClick={() => setBulkToolbarExpanded((prev) => !prev)}
+                className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent"
+              >
+                {bulkToolbarExpanded ? 'Einklappen' : 'Aufklappen'}
+              </button>
+            </div>
+            {bulkToolbarExpanded && (
+              <>
+                <button onClick={handleBulkDelete} className="rounded-md bg-destructive px-2 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90">
+                  Löschen
+                </button>
+                <button onClick={() => setBulkAction('move')} className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent">
+                  Aktivität
+                </button>
+                <button onClick={() => setBulkAction('paidby')} className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent">
+                  Bezahlt von
+                </button>
+                <button onClick={() => setBulkAction('category')} className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent">
+                  Kategorie
+                </button>
+                <button onClick={() => setBulkAction('date')} className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent">
+                  Datum
+                </button>
+                <button onClick={() => setBulkAction('assigned')} className="rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent">
+                  Zuteilung
+                </button>
+                {bulkAction === 'move' && (
+                  <div className="flex items-center gap-1">
+                    <select value={bulkTripId} onChange={(e) => setBulkTripId(e.target.value)} className="rounded-md border bg-background px-2 py-1 text-xs">
+                      <option value="">Aktivität wählen...</option>
+                      {trips.map((trip) => <option key={trip.id} value={trip.id}>{trip.name}</option>)}
+                    </select>
+                    <button onClick={handleBulkMoveToTrip} disabled={!bulkTripId} className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50">OK</button>
+                  </div>
+                )}
+                {bulkAction === 'paidby' && (
+                  <div className="flex items-center gap-1">
+                    <select value={bulkPaidBy} onChange={(e) => setBulkPaidBy(e.target.value)} className="rounded-md border bg-background px-2 py-1 text-xs">
+                      <option value="">Person wählen...</option>
+                      {members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+                    </select>
+                    <button onClick={handleBulkChangePaidBy} disabled={!bulkPaidBy} className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50">OK</button>
+                  </div>
+                )}
+                {bulkAction === 'category' && (
+                  <div className="flex items-center gap-1">
+                    <select value={bulkCategoryId} onChange={(e) => setBulkCategoryId(e.target.value)} className="rounded-md border bg-background px-2 py-1 text-xs">
+                      <option value="">Keine Kategorie</option>
+                      {localCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                    </select>
+                    <button onClick={handleBulkChangeCategory} className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground">OK</button>
+                  </div>
+                )}
+                {bulkAction === 'date' && (
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="date"
+                      value={bulkPurchasedAt}
+                      onChange={(e) => setBulkPurchasedAt(e.target.value)}
+                      className="rounded-md border bg-background px-2 py-1 text-xs"
+                    />
+                    <button onClick={handleBulkChangeDate} disabled={!bulkPurchasedAt} className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50">OK</button>
+                  </div>
+                )}
+                {bulkAction === 'assigned' && (
+                  <div className="grid w-full gap-2 rounded-md border bg-background p-2 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-center">
+                    <button
+                      onClick={() => setBulkAssignedTo(bulkAssignedTo.length === members.length ? [] : members.map((member) => member.id))}
+                      className="rounded border px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground lg:w-auto"
+                    >
+                      {bulkAssignedTo.length === members.length ? 'Keine' : 'Alle'}
+                    </button>
+                    {members.map((member) => (
+                      <label key={member.id} className="flex items-center gap-1 rounded border px-2 py-2 text-xs hover:bg-accent min-h-[40px]">
+                        <input
+                          type="checkbox"
+                          checked={bulkAssignedTo.includes(member.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setBulkAssignedTo((prev) => [...prev, member.id])
+                              return
+                            }
+                            setBulkAssignedTo((prev) => prev.filter((id) => id !== member.id))
+                          }}
+                          className="rounded"
+                        />
+                        {member.name.split(' ')[0]}
+                      </label>
+                    ))}
+                    <button onClick={handleBulkChangeAssignedTo} className="rounded bg-primary px-2 py-2 text-xs text-primary-foreground lg:w-auto">OK</button>
+                  </div>
+                )}
+              </>
+            )}
+           </div>
+        )}
+      </div>
 
       {localPurchases.length === 0 ? (
         <div className="rounded-lg border border-dashed p-8 text-center">
@@ -538,17 +823,42 @@ function PurchasesView({
           </Link>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className={bulkEditMode ? 'overflow-hidden rounded-lg border bg-card' : 'space-y-2'}>
+          {bulkEditMode && filteredPurchases.length > 0 && (
+            <div className="hidden border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid lg:grid-cols-[minmax(0,2fr)_120px_160px_140px_180px] lg:gap-2">
+              <span>Beschreibung</span>
+              <span className="text-right">Betrag</span>
+              <span>Bezahlt von</span>
+              <span>Datum</span>
+              <span>Kategorie / Aktivität</span>
+            </div>
+          )}
           {filteredPurchases.map((purchase) =>
-            editingId === purchase.id ? (
+            bulkEditMode ? (
+              <BulkEditPurchaseRow
+                key={purchase.id}
+                purchase={purchase}
+                value={bulkDrafts[purchase.id] ?? buildPurchaseUpdateData(purchase)}
+                dirty={purchase.id in bulkDrafts}
+                members={members}
+                categories={localCategories}
+                trips={trips}
+                groupId={groupId}
+                onChange={(data) => updateBulkDraft(purchase, data)}
+                onDelete={() => handleDelete(purchase.id)}
+                onCategoryCreated={handleCategoryCreated}
+              />
+            ) : editingId === purchase.id ? (
               <EditPurchaseRow
                 key={purchase.id}
                 purchase={purchase}
                 members={members}
-                categories={categories}
+                categories={localCategories}
+                trips={trips}
                 groupId={groupId}
                 onSave={(data) => handleUpdate(purchase.id, data)}
                 onCancel={() => setEditingId(null)}
+                onCategoryCreated={handleCategoryCreated}
               />
             ) : (
               <PurchaseRow
@@ -563,6 +873,33 @@ function PurchasesView({
               />
             )
           )}
+          {bulkEditMode && filteredPurchases.length === 0 && (
+            <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+              {showOnlyChanged ? 'Keine geänderten Zeilen.' : 'Keine Ausgaben gefunden.'}
+            </div>
+          )}
+        </div>
+      )}
+
+      {bulkEditMode && bulkDraftCount > 0 && (
+        <div className="sticky bottom-0 z-20 -mx-4 mt-4 border-t bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+          <div className="flex items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2 shadow-sm">
+            <p className="text-sm text-muted-foreground">{bulkDraftCount} Zeile(n) geändert</p>
+            <div className="flex gap-2">
+              <button
+                onClick={discardBulkDrafts}
+                className="rounded-md bg-secondary px-3 py-1.5 text-sm text-secondary-foreground hover:bg-accent"
+              >
+                Verwerfen
+              </button>
+              <button
+                onClick={saveBulkDrafts}
+                className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                Alle speichern
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -641,26 +978,34 @@ function PurchaseRow({
 function EditPurchaseRow({
   purchase,
   members,
-  categories: initialCategories,
+  categories,
+  trips,
   groupId,
   onSave,
   onCancel,
+  onDelete,
+  onCategoryCreated,
+  showCancel = true,
 }: {
   purchase: PurchaseWithAssignments
   members: Member[]
   categories: Category[]
+  trips: Trip[]
   groupId: string
   onSave: (data: { description: string; amountCents: number; paidByUserId: string; categoryId?: string; tripId?: string; purchasedAt?: string; assignedTo: string[] }) => void
-  onCancel: () => void
+  onCancel?: () => void
+  onDelete?: () => void
+  onCategoryCreated?: (category: Category) => void
+  showCancel?: boolean
 }) {
   const [description, setDescription] = useState(purchase.description)
   const [amount, setAmount] = useState((purchase.amountCents / 100).toFixed(2).replace('.', ','))
   const [paidBy, setPaidBy] = useState(purchase.paidByUserId)
+  const [tripId, setTripId] = useState(purchase.tripId ?? '')
   const [categoryId, setCategoryId] = useState(purchase.categoryId ?? '')
   const [purchasedAt, setPurchasedAt] = useState(purchase.purchasedAt || '')
   const [assignedTo, setAssignedTo] = useState(purchase.assignments.map((a) => a.userId))
   const [saving, setSaving] = useState(false)
-  const [categories, setCategories] = useState(initialCategories)
   const [newCategoryName, setNewCategoryName] = useState('')
   const [showNewCategory, setShowNewCategory] = useState(false)
 
@@ -676,7 +1021,7 @@ function EditPurchaseRow({
     if (!newCategoryName.trim()) return
     const result = await api.createCategory(groupId, newCategoryName.trim())
     const newCat: Category = { id: result.id, groupId, name: newCategoryName.trim() }
-    setCategories((prev) => [...prev, newCat])
+    onCategoryCreated?.(newCat)
     setCategoryId(result.id)
     setNewCategoryName('')
     setShowNewCategory(false)
@@ -692,7 +1037,7 @@ function EditPurchaseRow({
         amountCents: cents,
         paidByUserId: paidBy,
         categoryId: categoryId || undefined,
-        tripId: purchase.tripId,
+        tripId: tripId || undefined,
         purchasedAt: purchasedAt || undefined,
         assignedTo,
       })
@@ -703,7 +1048,7 @@ function EditPurchaseRow({
 
   return (
     <div className="rounded-lg border bg-card p-3 space-y-2">
-      <div className="flex gap-2">
+      <div className="flex flex-col gap-2 lg:flex-row">
         <input
           type="text"
           value={description}
@@ -715,11 +1060,11 @@ function EditPurchaseRow({
           type="text"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
-          className="w-24 rounded-md border bg-background px-2 py-1 text-sm text-right outline-none focus:ring-2 focus:ring-ring"
+          className="w-full rounded-md border bg-background px-2 py-1 text-sm text-right outline-none focus:ring-2 focus:ring-ring lg:w-24"
           placeholder="0,00"
         />
       </div>
-      <div className="flex gap-2 items-center flex-wrap">
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
         <select
           value={paidBy}
           onChange={(e) => setPaidBy(e.target.value)}
@@ -735,11 +1080,21 @@ function EditPurchaseRow({
           onChange={(e) => setPurchasedAt(e.target.value)}
           className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
         />
-        <div className="flex items-center gap-1">
+        <select
+          value={tripId}
+          onChange={(e) => setTripId(e.target.value)}
+          className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="">Ohne Aktivität</option>
+          {trips.map((trip) => (
+            <option key={trip.id} value={trip.id}>{trip.name}</option>
+          ))}
+        </select>
+        <div className="flex items-center gap-1 min-w-0">
           <select
             value={categoryId}
             onChange={(e) => setCategoryId(e.target.value)}
-            className="rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+            className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
           >
             <option value="">Keine Kategorie</option>
             {categories.map((c) => (
@@ -765,41 +1120,270 @@ function EditPurchaseRow({
           )}
         </div>
       </div>
-      <div className="flex items-center gap-2 overflow-x-auto pb-1">
-        <button onClick={toggleAllAssigned} className="shrink-0 rounded-md border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
-          {assignedTo.length === members.length ? 'Keine' : 'Alle'}
-        </button>
-        {members.map((m) => (
-          <label key={m.id} className="flex shrink-0 cursor-pointer select-none items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-accent">
-            <input
-              type="checkbox"
-              checked={assignedTo.includes(m.id)}
-              onChange={(e) => {
-                if (e.target.checked) {
-                  setAssignedTo((prev) => [...prev, m.id])
-                } else {
-                  setAssignedTo((prev) => prev.filter((id) => id !== m.id))
-                }
-              }}
-              className="h-4 w-4 rounded"
-            />
-            {m.name.split(' ')[0]}
-          </label>
-        ))}
+      <div className="rounded-md border bg-muted/30 p-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="text-xs font-medium text-muted-foreground">Zuteilung</p>
+          <button onClick={toggleAllAssigned} className="shrink-0 rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
+            {assignedTo.length === members.length ? 'Keine' : 'Alle'}
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {members.map((m) => (
+            <label key={m.id} className="flex cursor-pointer select-none items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm hover:bg-accent min-w-[140px]">
+              <input
+                type="checkbox"
+                checked={assignedTo.includes(m.id)}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    setAssignedTo((prev) => [...prev, m.id])
+                  } else {
+                    setAssignedTo((prev) => prev.filter((id) => id !== m.id))
+                  }
+                }}
+                className="h-4 w-4 rounded"
+              />
+              <span className="truncate">{m.name}</span>
+            </label>
+          ))}
+        </div>
       </div>
       <div className="flex gap-2 justify-end">
-        <button
-          onClick={onCancel}
-          className="rounded-md bg-secondary px-3 py-1 text-sm text-secondary-foreground hover:bg-accent"
-        >
-          Abbrechen
-        </button>
+        {onDelete && (
+          <button
+            onClick={onDelete}
+            className="rounded-md bg-destructive px-3 py-1 text-sm text-destructive-foreground hover:bg-destructive/90"
+          >
+            Löschen
+          </button>
+        )}
+        {showCancel && onCancel && (
+          <button
+            onClick={onCancel}
+            className="rounded-md bg-secondary px-3 py-1 text-sm text-secondary-foreground hover:bg-accent"
+          >
+            Abbrechen
+          </button>
+        )}
         <button
           onClick={handleSave}
           disabled={saving}
           className="rounded-md bg-primary px-3 py-1 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
           {saving ? '...' : 'Speichern'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function BulkEditPurchaseRow({
+  purchase,
+  value,
+  dirty,
+  members,
+  categories,
+  trips,
+  groupId,
+  onChange,
+  onDelete,
+  onCategoryCreated,
+}: {
+  purchase: PurchaseWithAssignments
+  value: PurchaseUpdateData
+  dirty: boolean
+  members: Member[]
+  categories: Category[]
+  trips: Trip[]
+  groupId: string
+  onChange: (data: PurchaseUpdateData) => void
+  onDelete: () => void
+  onCategoryCreated?: (category: Category) => void
+}) {
+  const [newCategoryName, setNewCategoryName] = useState('')
+  const [showNewCategory, setShowNewCategory] = useState(false)
+  const [expanded, setExpanded] = useState(dirty)
+
+  useEffect(() => {
+    if (dirty) {
+      setExpanded(true)
+    }
+  }, [dirty])
+
+  const toggleAllAssigned = () => {
+    onChange({
+      ...value,
+      assignedTo: value.assignedTo.length === members.length ? [] : members.map((member) => member.id),
+    })
+  }
+
+  const handleCreateCategory = async () => {
+    if (!newCategoryName.trim()) return
+    const result = await api.createCategory(groupId, newCategoryName.trim())
+    const newCategory: Category = { id: result.id, groupId, name: newCategoryName.trim() }
+    onCategoryCreated?.(newCategory)
+    onChange({ ...value, categoryId: result.id })
+    setNewCategoryName('')
+    setShowNewCategory(false)
+  }
+
+  return (
+    <div className={`space-y-2 border-b px-3 py-3 last:border-b-0 ${dirty ? 'bg-primary/5' : 'bg-card/80'}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 text-[11px] text-muted-foreground">
+          <p className="truncate">{purchase.description}</p>
+          <p>
+            {new Date(purchase.purchasedAt || purchase.createdAt).toLocaleDateString('de-DE')}
+            {' '}
+            &middot; {value.assignedTo.length} Person(en)
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {dirty && <span className="rounded bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Geändert</span>}
+          {!dirty && (
+            <button
+              type="button"
+              onClick={() => setExpanded((prev) => !prev)}
+              className="rounded border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              {expanded ? 'Weniger' : 'Mehr'}
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="grid gap-2 lg:grid-cols-[minmax(0,2fr)_120px_160px_140px_180px] lg:items-start">
+        <div className="space-y-1">
+          <label className="text-[11px] font-medium text-muted-foreground lg:hidden">Beschreibung</label>
+          <input
+            type="text"
+            value={value.description}
+            onChange={(e) => onChange({ ...value, description: e.target.value })}
+            className="w-full rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+            placeholder="Beschreibung"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] font-medium text-muted-foreground lg:hidden">Betrag</label>
+          <input
+            type="text"
+            value={(value.amountCents / 100).toFixed(2).replace('.', ',')}
+            onChange={(e) => {
+              const cents = Math.round(parseFloat(e.target.value.replace(',', '.')) * 100)
+              onChange({ ...value, amountCents: Number.isNaN(cents) ? 0 : cents })
+            }}
+            className="w-full rounded-md border bg-muted/20 px-2 py-1 text-sm text-right font-medium tabular-nums outline-none focus:ring-2 focus:ring-ring"
+            placeholder="0,00"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] font-medium text-muted-foreground lg:hidden">Bezahlt von</label>
+          <select
+            value={value.paidByUserId}
+            onChange={(e) => onChange({ ...value, paidByUserId: e.target.value })}
+            className="w-full rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+          >
+            {members.map((member) => (
+              <option key={member.id} value={member.id}>{member.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] font-medium text-muted-foreground lg:hidden">Datum</label>
+          <input
+            type="date"
+            value={value.purchasedAt || ''}
+            onChange={(e) => onChange({ ...value, purchasedAt: e.target.value || undefined })}
+            className="w-full rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+        <div className="grid gap-2">
+          <div className="space-y-1">
+            <label className="text-[11px] font-medium text-muted-foreground lg:hidden">Aktivität</label>
+            <select
+              value={value.tripId || ''}
+              onChange={(e) => onChange({ ...value, tripId: e.target.value || undefined })}
+              className="w-full rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="">Ohne Aktivität</option>
+              {trips.map((trip) => (
+                <option key={trip.id} value={trip.id}>{trip.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-[11px] font-medium text-muted-foreground lg:hidden">Kategorie</label>
+            <div className="flex items-center gap-1 min-w-0">
+              <select
+                value={value.categoryId || ''}
+                onChange={(e) => onChange({ ...value, categoryId: e.target.value || undefined })}
+                className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="">Keine Kategorie</option>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>{category.name}</option>
+                ))}
+              </select>
+              {!showNewCategory ? (
+                <button type="button" onClick={() => setShowNewCategory(true)} className="text-xs text-muted-foreground hover:text-foreground">+</button>
+              ) : (
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleCreateCategory()
+                    }}
+                    placeholder="Neue Kategorie"
+                    className="w-28 rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-ring"
+                    autoFocus
+                  />
+                  <button type="button" onClick={handleCreateCategory} className="text-xs text-primary hover:text-primary/80">OK</button>
+                  <button type="button" onClick={() => setShowNewCategory(false)} className="text-xs text-muted-foreground">X</button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+      {(expanded || dirty) ? (
+        <div className="rounded-md border bg-muted/30 p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-xs font-medium text-muted-foreground">Zuteilung</p>
+            <button onClick={toggleAllAssigned} className="shrink-0 rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
+              {value.assignedTo.length === members.length ? 'Keine' : 'Alle'}
+            </button>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {members.map((member) => (
+              <label key={member.id} className="flex min-h-[44px] cursor-pointer items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm hover:bg-accent">
+                <input
+                  type="checkbox"
+                  checked={value.assignedTo.includes(member.id)}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      onChange({ ...value, assignedTo: [...value.assignedTo, member.id] })
+                      return
+                    }
+                    onChange({ ...value, assignedTo: value.assignedTo.filter((id) => id !== member.id) })
+                  }}
+                  className="h-4 w-4 rounded"
+                />
+                <span className="truncate">{member.name}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          {value.assignedTo.length} von {members.length} Personen zugeteilt
+        </div>
+      )}
+      <div className="flex justify-end">
+        <button
+          onClick={onDelete}
+          className="rounded-md bg-destructive px-3 py-1.5 text-sm text-destructive-foreground hover:bg-destructive/90"
+        >
+          Löschen
         </button>
       </div>
     </div>
