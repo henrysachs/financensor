@@ -1,3 +1,10 @@
+# [0.6.0](https://github.com/henrysachs/financensor/compare/v0.5.0...v0.6.0) (2026-05-04)
+
+
+### Features
+
+* improve purchases bulk edit UX ([31e6f2d](https://github.com/henrysachs/financensor/commit/31e6f2d219c8e701b0dc7c6953a1de800b79bcda))
+
 # [0.5.0](https://github.com/henrysachs/financensor/compare/v0.4.0...v0.5.0) (2026-05-04)
 
 
