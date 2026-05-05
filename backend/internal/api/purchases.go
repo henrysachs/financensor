@@ -7,6 +7,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 	"github.com/henrysachs/financensor/backend/internal/auth"
+	"github.com/henrysachs/financensor/backend/internal/metrics"
 	"github.com/henrysachs/financensor/backend/internal/model"
 	"github.com/jmoiron/sqlx"
 )
@@ -303,7 +304,11 @@ func insertPurchase(db *sqlx.DB, groupID, createdBy string, req purchaseReq) (st
 		}
 	}
 
-	return purchaseID, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	metrics.PurchasesCreatedTotal.Inc()
+	return purchaseID, nil
 }
 
 func canEditPurchase(db *sqlx.DB, groupID, purchaseID, userID string) bool {

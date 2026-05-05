@@ -7,6 +7,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 	"github.com/henrysachs/financensor/backend/internal/auth"
+	"github.com/henrysachs/financensor/backend/internal/metrics"
 	"github.com/henrysachs/financensor/backend/internal/model"
 	"github.com/jmoiron/sqlx"
 )
@@ -77,6 +78,8 @@ func registerUserRoutes(api huma.API, db *sqlx.DB) {
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to create ghost user", err)
 		}
+
+		metrics.UsersCreatedTotal.WithLabelValues("ghost").Inc()
 
 		resp := &CreateGhostUserOutput{}
 		resp.Body.ID = id

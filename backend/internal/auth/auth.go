@@ -16,6 +16,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/henrysachs/financensor/backend/internal/metrics"
 	"github.com/jmoiron/sqlx"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -326,6 +327,7 @@ func HandleGoogleCallback(db *sqlx.DB) http.HandlerFunc {
 				http.Error(w, "failed to create user", http.StatusInternalServerError)
 				return
 			}
+			metrics.UsersCreatedTotal.WithLabelValues("oauth").Inc()
 		}
 
 		jwtToken, err := GenerateToken(userID)
