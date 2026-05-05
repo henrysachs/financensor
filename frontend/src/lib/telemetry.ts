@@ -1,40 +1,28 @@
-import { WebTracerProvider, BatchSpanProcessor } from '@opentelemetry/sdk-trace-web'
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
-import { resourceFromAttributes } from '@opentelemetry/resources'
-import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions'
-import { ZoneContextManager } from '@opentelemetry/context-zone'
-import { FetchInstrumentation } from '@opentelemetry/instrumentation-fetch'
-import { registerInstrumentations } from '@opentelemetry/instrumentation'
+import { initializeFaro, getWebInstrumentations } from '@grafana/faro-web-sdk'
+import { TracingInstrumentation } from '@grafana/faro-web-tracing'
+import { ReactIntegration } from '@grafana/faro-react'
+import { ReplayInstrumentation } from '@grafana/faro-instrumentation-replay'
+
+declare const __APP_VERSION__: string
 
 export function initTelemetry() {
   if (!import.meta.env.PROD) return
 
-  const resource = resourceFromAttributes({
-    [ATTR_SERVICE_NAME]: 'financensor-frontend',
-    [ATTR_SERVICE_VERSION]: '1.0.0',
-  })
-
-  const exporter = new OTLPTraceExporter({
-    url: 'https://api.financensor.stammkneipe.dev/otlp/v1/traces',
-  })
-
-  const provider = new WebTracerProvider({
-    resource,
-    spanProcessors: [new BatchSpanProcessor(exporter)],
-  })
-
-  provider.register({
-    contextManager: new ZoneContextManager(),
-  })
-
-  registerInstrumentations({
+  initializeFaro({
+    url: 'https://alloy.financensor.stammkneipe.dev/collect',
+    app: {
+      name: 'financensor-frontend',
+      version: __APP_VERSION__,
+    },
     instrumentations: [
-      new FetchInstrumentation({
-        propagateTraceHeaderCorsUrls: [
-          /https:\/\/api\.financensor\.stammkneipe\.dev/,
-        ],
-        clearTimingResources: true,
+      ...getWebInstrumentations(),
+      new TracingInstrumentation({
+        instrumentationOptions: {
+          propagateTraceHeaderCorsUrls: [/https:\/\/api\.financensor\.stammkneipe\.dev/],
+        },
       }),
+      new ReactIntegration(),
+      new ReplayInstrumentation(),
     ],
   })
 }

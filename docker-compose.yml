@@ -77,6 +77,8 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    volumes:
+      - frontend-sourcemaps:/sourcemaps
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.frontend.rule=Host(`financensor.stammkneipe.dev`)"
@@ -265,6 +267,31 @@ services:
       - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
 
+  alloy:
+    image: grafana/alloy:latest
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    volumes:
+      - ./monitoring/alloy.river:/etc/alloy/config.alloy:ro
+      - frontend-sourcemaps:/sourcemaps:ro
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --server.http.listen-addr=0.0.0.0:12345
+    depends_on:
+      - loki
+      - tempo
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.alloy.rule=Host(`alloy.financensor.stammkneipe.dev`)"
+      - "traefik.http.routers.alloy.entrypoints=websecure"
+      - "traefik.http.routers.alloy.tls.certresolver=letsencrypt"
+      - "traefik.http.services.alloy.loadbalancer.server.port=12347"
+
 volumes:
   db-data:
   uploads:
@@ -273,3 +300,4 @@ volumes:
   loki-data:
   tempo-data:
   grafana-data:
+  frontend-sourcemaps:
