@@ -1,3 +1,10 @@
+# [0.12.0](https://github.com/henrysachs/financensor/compare/v0.11.0...v0.12.0) (2026-05-05)
+
+
+### Features
+
+* add otelsql for automatic DB query tracing ([d8916af](https://github.com/henrysachs/financensor/commit/d8916af6ba3c57017c830258626be4dae7498e61))
+
 # [0.11.0](https://github.com/henrysachs/financensor/compare/v0.10.0...v0.11.0) (2026-05-05)
 
 
