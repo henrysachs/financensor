@@ -1,3 +1,10 @@
+# [0.10.0](https://github.com/henrysachs/financensor/compare/v0.9.0...v0.10.0) (2026-05-05)
+
+
+### Features
+
+* add business metrics (purchases, groups, users created) ([3a228a2](https://github.com/henrysachs/financensor/commit/3a228a213fdbeccca0ffee84137d950a3d3c8f0b))
+
 # [0.9.0](https://github.com/henrysachs/financensor/compare/v0.8.0...v0.9.0) (2026-05-05)
 
 
