@@ -63,7 +63,7 @@
       "gridPos": { "h": 4, "w": 8, "x": 0, "y": 16 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "sum(traefik_entrypoint_open_connections)", "legendFormat": "Open" }
+        { "expr": "sum(traefik_open_connections)", "legendFormat": "Open" }
       ]
     },
     {

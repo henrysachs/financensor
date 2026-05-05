@@ -2,7 +2,7 @@
   "annotations": { "list": [] },
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 1,
+  "graphTooltip": 2,
   "links": [],
   "panels": [
     {
@@ -11,7 +11,7 @@
       "gridPos": { "h": 2, "w": 24, "x": 0, "y": 0 },
       "options": {
         "mode": "markdown",
-        "content": "# Financensor Application Dashboard\nReal-time overview of the Financensor API"
+        "content": "# Financensor Application Dashboard\nBackend metrics (native) · Logs (Loki) · Traces (Tempo)"
       }
     },
     {
@@ -20,17 +20,17 @@
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 2 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "sum(rate(traefik_service_requests_total{service=\"financensor-backend-1-financensor@docker\"}[5m]))", "legendFormat": "req/s" }
+        { "expr": "sum(rate(http_requests_total{job=\"backend\"}[5m]))", "legendFormat": "req/s" }
       ],
       "fieldConfig": { "defaults": { "unit": "reqps", "color": { "mode": "thresholds" }, "thresholds": { "steps": [{"color": "green", "value": null}] } } }
     },
     {
-      "title": "Error Rate",
+      "title": "Error Rate (5xx)",
       "type": "stat",
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 2 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "sum(rate(traefik_service_requests_total{service=\"financensor-backend-1-financensor@docker\",code=~\"5..\"}[5m])) / sum(rate(traefik_service_requests_total{service=\"financensor-backend-1-financensor@docker\"}[5m])) * 100 or vector(0)", "legendFormat": "errors" }
+        { "expr": "sum(rate(http_requests_total{job=\"backend\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"backend\"}[5m])) * 100 or vector(0)", "legendFormat": "errors" }
       ],
       "fieldConfig": { "defaults": { "unit": "percent", "color": { "mode": "thresholds" }, "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}] } } }
     },
@@ -40,7 +40,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 2 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "histogram_quantile(0.95, sum(rate(traefik_service_request_duration_seconds_bucket{service=\"financensor-backend-1-financensor@docker\"}[5m])) by (le))", "legendFormat": "p95" }
+        { "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"backend\"}[5m])) by (le))", "legendFormat": "p95" }
       ],
       "fieldConfig": { "defaults": { "unit": "s", "color": { "mode": "thresholds" }, "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "red", "value": 1}] } } }
     },
@@ -50,19 +50,19 @@
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 2 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "sum(increase(traefik_service_requests_total{service=\"financensor-backend-1-financensor@docker\"}[24h]))", "legendFormat": "total" }
+        { "expr": "sum(increase(http_requests_total{job=\"backend\"}[24h]))", "legendFormat": "total" }
       ],
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{"color": "blue", "value": null}] } } }
     },
     {
-      "title": "Request Rate by Endpoint",
+      "title": "Request Rate by Route",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(rate(traefik_service_requests_total{service=\"financensor-backend-1-financensor@docker\"}[5m])) by (method)",
-          "legendFormat": "{{method}}"
+          "expr": "sum(rate(http_requests_total{job=\"backend\",route!=\"/health\",route!=\"/metrics\"}[5m])) by (route)",
+          "legendFormat": "{{route}}"
         }
       ],
       "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "lineWidth": 2 } } }
@@ -74,8 +74,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(increase(traefik_service_requests_total{service=\"financensor-backend-1-financensor@docker\"}[1h])) by (code)",
-          "legendFormat": "{{code}}"
+          "expr": "sum(increase(http_requests_total{job=\"backend\"}[1h])) by (status)",
+          "legendFormat": "{{status}}"
         }
       ],
       "options": { "legend": { "displayMode": "table", "placement": "right" } }
@@ -86,54 +86,45 @@
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        {
-          "expr": "histogram_quantile(0.50, sum(rate(traefik_service_request_duration_seconds_bucket{service=\"financensor-backend-1-financensor@docker\"}[5m])) by (le))",
-          "legendFormat": "p50"
-        },
-        {
-          "expr": "histogram_quantile(0.90, sum(rate(traefik_service_request_duration_seconds_bucket{service=\"financensor-backend-1-financensor@docker\"}[5m])) by (le))",
-          "legendFormat": "p90"
-        },
-        {
-          "expr": "histogram_quantile(0.95, sum(rate(traefik_service_request_duration_seconds_bucket{service=\"financensor-backend-1-financensor@docker\"}[5m])) by (le))",
-          "legendFormat": "p95"
-        },
-        {
-          "expr": "histogram_quantile(0.99, sum(rate(traefik_service_request_duration_seconds_bucket{service=\"financensor-backend-1-financensor@docker\"}[5m])) by (le))",
-          "legendFormat": "p99"
-        }
+        { "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{job=\"backend\"}[5m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.90, sum(rate(http_request_duration_seconds_bucket{job=\"backend\"}[5m])) by (le))", "legendFormat": "p90" },
+        { "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"backend\"}[5m])) by (le))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"backend\"}[5m])) by (le))", "legendFormat": "p99" }
       ],
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10, "lineWidth": 2, "gradientMode": "scheme" } } }
     },
     {
-      "title": "Backend Errors",
-      "type": "logs",
+      "title": "Slowest Routes (p95)",
+      "type": "table",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 22 },
-      "datasource": { "type": "loki", "uid": "loki" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "{service=\"financensor-backend-1\"} |~ `(?i)(error|ERROR|panic)`",
-          "refId": "A"
+          "expr": "topk(10, histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"backend\",route!=\"/health\",route!=\"/metrics\"}[5m])) by (le, route)))",
+          "legendFormat": "{{route}}",
+          "format": "table",
+          "instant": true
         }
       ],
-      "options": {
-        "showTime": true,
-        "sortOrder": "Descending",
-        "enableLogDetails": true
-      }
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "title": "Backend Errors (Logs)",
+      "type": "logs",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 30 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        { "expr": "{service=\"backend\"} | json | level = `ERROR`", "refId": "A" }
+      ],
+      "options": { "showTime": true, "sortOrder": "Descending", "enableLogDetails": true }
     },
     {
       "title": "Recent Traces (slowest)",
       "type": "table",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 30 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 38 },
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [
-        {
-          "queryType": "traceql",
-          "query": "{ resource.service.name = \"financensor-backend\" } | sort(duration) | limit(10)",
-          "limit": 10,
-          "refId": "A"
-        }
+        { "queryType": "traceql", "query": "{ resource.service.name = \"financensor-backend\" && duration > 50ms }", "limit": 10, "refId": "A" }
       ]
     }
   ],

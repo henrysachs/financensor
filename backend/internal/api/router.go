@@ -6,19 +6,20 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/henrysachs/financensor/backend/internal/auth"
+	mw "github.com/henrysachs/financensor/backend/internal/middleware"
 	"github.com/jmoiron/sqlx"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 func NewRouter(db *sqlx.DB) http.Handler {
 	r := chi.NewRouter()
 
-	r.Use(middleware.RequestID)
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
+	r.Use(chimw.RequestID)
+	r.Use(chimw.Recoverer)
 	r.Use(func(next http.Handler) http.Handler {
 		return otelhttp.NewHandler(next, "financensor",
 			otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
@@ -33,6 +34,11 @@ func NewRouter(db *sqlx.DB) http.Handler {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
+	r.Use(mw.PrometheusMetrics)
+	r.Use(mw.SlogRequestLogger)
+
+	// Prometheus metrics endpoint (internal only, not exposed via Traefik)
+	r.Get("/metrics", promhttp.Handler().ServeHTTP)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

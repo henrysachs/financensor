@@ -11,17 +11,9 @@
       "gridPos": { "h": 12, "w": 24, "x": 0, "y": 0 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
-        {
-          "expr": "{service=\"financensor-backend-1\"} |= ``",
-          "refId": "A"
-        }
+        { "expr": "{service=\"backend\"} | json", "refId": "A" }
       ],
-      "options": {
-        "showTime": true,
-        "sortOrder": "Descending",
-        "enableLogDetails": true,
-        "dedupStrategy": "none"
-      }
+      "options": { "showTime": true, "sortOrder": "Descending", "enableLogDetails": true, "dedupStrategy": "none" }
     },
     {
       "title": "Error Logs (all services)",
@@ -29,16 +21,9 @@
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 12 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
-        {
-          "expr": "{service=~\".+\"} |~ `(?i)(error|ERROR|panic|PANIC|fatal|FATAL)`",
-          "refId": "A"
-        }
+        { "expr": "{service=\"backend\"} | json | level = `ERROR`", "refId": "A" }
       ],
-      "options": {
-        "showTime": true,
-        "sortOrder": "Descending",
-        "enableLogDetails": true
-      }
+      "options": { "showTime": true, "sortOrder": "Descending", "enableLogDetails": true }
     },
     {
       "title": "Log Volume",
@@ -46,10 +31,19 @@
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 22 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
-        {
-          "expr": "sum(rate({service=~\".+\"}[5m])) by (service)",
-          "legendFormat": "{{service}}"
-        }
+        { "expr": "sum(rate({service=~\".+\"}[5m])) by (service)", "legendFormat": "{{service}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "logs/s" } }
+    },
+    {
+      "title": "Requests by Status (from logs)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 28 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        { "expr": "sum(rate({service=\"backend\"} | json | status >= 500 [5m]))", "legendFormat": "5xx" },
+        { "expr": "sum(rate({service=\"backend\"} | json | status >= 400 | status < 500 [5m]))", "legendFormat": "4xx" },
+        { "expr": "sum(rate({service=\"backend\"} | json | status >= 200 | status < 300 [5m]))", "legendFormat": "2xx" }
       ],
       "fieldConfig": { "defaults": { "unit": "logs/s" } }
     }
