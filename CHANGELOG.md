@@ -1,3 +1,10 @@
+# [0.13.0](https://github.com/henrysachs/financensor/compare/v0.12.0...v0.13.0) (2026-05-05)
+
+
+### Features
+
+* add Grafana Faro frontend observability ([7b70e69](https://github.com/henrysachs/financensor/commit/7b70e69d90ecfac852b498b19ddc85e407629451))
+
 # [0.12.0](https://github.com/henrysachs/financensor/compare/v0.11.0...v0.12.0) (2026-05-05)
 
 
