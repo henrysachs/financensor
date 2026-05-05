@@ -1,4 +1,4 @@
-const CACHE_NAME = 'financensor-v2'
+const CACHE_NAME = 'financensor-v3'
 const STATIC_ASSETS = [
   '/manifest.json',
   '/favicon.svg',

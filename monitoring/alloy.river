@@ -8,8 +8,8 @@ faro.receiver "default" {
     api_key          = ""
     max_allowed_payload_size = "10MiB"
     rate_limiting {
-      enabled   = true
-      rate      = 100
+      enabled    = true
+      rate       = 100
       burst_size = 200
     }
   }
@@ -23,8 +23,19 @@ faro.receiver "default" {
   }
 
   output {
-    logs   = [loki.write.default.receiver]
+    logs   = [loki.process.faro.receiver]
     traces = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+// Add service_name label from Faro app name before writing to Loki
+loki.process "faro" {
+  forward_to = [loki.write.default.receiver]
+
+  stage.static_labels {
+    values = {
+      service_name = "financensor-frontend",
+    }
   }
 }
 
