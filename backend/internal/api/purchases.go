@@ -7,6 +7,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 	"github.com/henrysachs/financensor/backend/internal/auth"
+	idb "github.com/henrysachs/financensor/backend/internal/db"
 	"github.com/henrysachs/financensor/backend/internal/metrics"
 	"github.com/henrysachs/financensor/backend/internal/model"
 	"github.com/jmoiron/sqlx"
@@ -270,6 +271,7 @@ type purchaseReq struct {
 }
 
 func insertPurchase(db *sqlx.DB, groupID, createdBy string, req purchaseReq) (string, error) {
+	defer idb.ObserveQuery("insert_purchase")()
 	purchaseID := uuid.New().String()
 
 	tx, err := db.Beginx()

@@ -9,6 +9,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 	"github.com/henrysachs/financensor/backend/internal/auth"
+	idb "github.com/henrysachs/financensor/backend/internal/db"
 	"github.com/henrysachs/financensor/backend/internal/metrics"
 	"github.com/henrysachs/financensor/backend/internal/model"
 	"github.com/jmoiron/sqlx"
@@ -98,6 +99,7 @@ func registerGroupRoutes(api huma.API, db *sqlx.DB) {
 		Summary:     "Create a group",
 		Tags:        []string{"Groups"},
 	}, func(ctx context.Context, input *CreateGroupInput) (*CreateGroupOutput, error) {
+		defer idb.ObserveQuery("create_group")()
 		userID := auth.GetUserID(ctx)
 
 		groupID := uuid.New().String()
