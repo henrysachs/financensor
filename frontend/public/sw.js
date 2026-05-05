@@ -33,9 +33,13 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // Never cache non-GET requests (e.g. telemetry POSTs)
+  // External requests (telemetry, Alloy, etc.): network only
+  if (url.origin !== self.location.origin) {
+    return
+  }
+
+  // Never cache non-GET requests
   if (request.method !== 'GET') {
-    event.respondWith(fetch(request))
     return
   }
 
