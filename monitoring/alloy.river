@@ -1,6 +1,12 @@
 // Grafana Alloy configuration for Faro frontend observability
 
 faro.receiver "default" {
+  extra_log_labels = {
+    service_name = "financensor-frontend",
+  }
+
+  log_format = "json"
+
   server {
     listen_address   = "0.0.0.0"
     listen_port      = 12347
@@ -23,19 +29,8 @@ faro.receiver "default" {
   }
 
   output {
-    logs   = [loki.process.faro.receiver]
+    logs   = [loki.write.default.receiver]
     traces = [otelcol.exporter.otlp.tempo.input]
-  }
-}
-
-// Add service_name label from Faro app name before writing to Loki
-loki.process "faro" {
-  forward_to = [loki.write.default.receiver]
-
-  stage.static_labels {
-    values = {
-      service_name = "financensor-frontend",
-    }
   }
 }
 

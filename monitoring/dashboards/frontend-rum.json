@@ -40,7 +40,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 10 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
-        { "expr": "sum(count_over_time({service_name=\"financensor-frontend\"} | json [5m])) by (kind)", "legendFormat": "{{kind}}" }
+        { "expr": "sum(count_over_time({service_name=\"financensor-frontend\"} | json | kind != `event` [5m])) by (kind)", "legendFormat": "{{kind}}" }
       ],
       "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20, "lineWidth": 2, "stacking": { "mode": "normal" } } } }
     },
@@ -50,7 +50,7 @@
       "gridPos": { "h": 4, "w": 5, "x": 0, "y": 16 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
-        { "expr": "{service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | name = `lcp` | unwrap value [1h] | __error__=\"\"", "legendFormat": "LCP", "instant": true }
+        { "expr": "avg_over_time({service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | lcp != `` | unwrap lcp [1h])", "legendFormat": "LCP", "instant": true }
       ],
       "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 2500}, {"color": "red", "value": 4000}] } } }
     },
@@ -60,7 +60,7 @@
       "gridPos": { "h": 4, "w": 5, "x": 5, "y": 16 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
-        { "expr": "{service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | name = `fcp` | unwrap value [1h] | __error__=\"\"", "legendFormat": "FCP", "instant": true }
+        { "expr": "avg_over_time({service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | fcp != `` | unwrap fcp [1h])", "legendFormat": "FCP", "instant": true }
       ],
       "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1800}, {"color": "red", "value": 3000}] } } }
     },
@@ -70,7 +70,7 @@
       "gridPos": { "h": 4, "w": 5, "x": 10, "y": 16 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
-        { "expr": "{service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | name = `cls` | unwrap value [1h] | __error__=\"\"", "legendFormat": "CLS", "instant": true }
+        { "expr": "avg_over_time({service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | cls != `` | unwrap cls [1h])", "legendFormat": "CLS", "instant": true }
       ],
       "fieldConfig": { "defaults": { "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 0.25}] } } }
     },
@@ -80,7 +80,7 @@
       "gridPos": { "h": 4, "w": 5, "x": 15, "y": 16 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
-        { "expr": "{service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | name = `inp` | unwrap value [1h] | __error__=\"\"", "legendFormat": "INP", "instant": true }
+        { "expr": "avg_over_time({service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | inp != `` | unwrap inp [1h])", "legendFormat": "INP", "instant": true }
       ],
       "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 200}, {"color": "red", "value": 500}] } } }
     },
@@ -90,7 +90,7 @@
       "gridPos": { "h": 4, "w": 4, "x": 20, "y": 16 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
-        { "expr": "{service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | name = `ttfb` | unwrap value [1h] | __error__=\"\"", "legendFormat": "TTFB", "instant": true }
+        { "expr": "avg_over_time({service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | ttfb != `` | unwrap ttfb [1h])", "legendFormat": "TTFB", "instant": true }
       ],
       "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 800}, {"color": "red", "value": 1800}] } } }
     },
@@ -100,7 +100,7 @@
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 20 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
-        { "expr": "{service_name=\"financensor-frontend\"} | json | kind = `log` | level =~ `warn|error`", "refId": "A" }
+        { "expr": "{service_name=\"financensor-frontend\"} | json | kind = `log`", "refId": "A" }
       ],
       "options": { "showTime": true, "sortOrder": "Descending", "enableLogDetails": true }
     },
@@ -110,9 +110,9 @@
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 26 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
-        { "expr": "sum(count_over_time({service_name=\"financensor-frontend\"} | json | kind = `event` | name = `view_changed` [5m])) by (view_name)", "legendFormat": "{{view_name}}" }
+        { "expr": "sum(count_over_time({service_name=\"financensor-frontend\"} | json | kind = `event` | event_name = `view_changed` [5m]))", "legendFormat": "views/5m" }
       ],
-      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20, "lineWidth": 2, "stacking": { "mode": "normal" } } } }
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20, "lineWidth": 2 } } }
     },
     {
       "title": "Sessions",
@@ -120,14 +120,24 @@
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 26 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
-        { "expr": "sum(count_over_time({service_name=\"financensor-frontend\"} | json | kind = `event` | name =~ `session_.*` [5m])) by (name)", "legendFormat": "{{name}}" }
+        { "expr": "sum(count_over_time({service_name=\"financensor-frontend\"} | json | kind = `event` | event_name =~ `session_.*` [5m])) by (event_name)", "legendFormat": "{{event_name}}" }
       ],
       "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20, "lineWidth": 2 } } }
     },
     {
+      "title": "All Frontend Events",
+      "type": "logs",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        { "expr": "{service_name=\"financensor-frontend\"} | json | kind != `event` or event_name != `faro.session_recording.event`", "refId": "A" }
+      ],
+      "options": { "showTime": true, "sortOrder": "Descending", "enableLogDetails": true }
+    },
+    {
       "title": "Frontend Traces",
       "type": "table",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 40 },
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [
         { "queryType": "traceqlSearch", "serviceName": "financensor-frontend", "limit": 20, "refId": "A" }
