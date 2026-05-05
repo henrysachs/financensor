@@ -1,3 +1,15 @@
+# [0.14.0](https://github.com/henrysachs/financensor/compare/v0.13.0...v0.14.0) (2026-05-05)
+
+
+### Bug Fixes
+
+* bump SW cache version, fix Loki max entry size, add no-cache to HTML ([d4ef704](https://github.com/henrysachs/financensor/commit/d4ef7045a15d575412af58f8d15c4c95031d8de2))
+
+
+### Features
+
+* add Frontend RUM Grafana dashboard ([6e3e487](https://github.com/henrysachs/financensor/commit/6e3e487627305b92ee5ec8f763915efa295bfd86))
+
 # [0.13.0](https://github.com/henrysachs/financensor/compare/v0.12.0...v0.13.0) (2026-05-05)
 
 
