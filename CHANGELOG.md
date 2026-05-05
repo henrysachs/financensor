@@ -1,3 +1,10 @@
+# [0.11.0](https://github.com/henrysachs/financensor/compare/v0.10.0...v0.11.0) (2026-05-05)
+
+
+### Features
+
+* add DB query duration instrumentation ([4c11e4a](https://github.com/henrysachs/financensor/commit/4c11e4aec8d73ae7394285c1b7e2dcdc5a1c5135))
+
 # [0.10.0](https://github.com/henrysachs/financensor/compare/v0.9.0...v0.10.0) (2026-05-05)
 
 
