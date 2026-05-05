@@ -1,3 +1,15 @@
+# [0.9.0](https://github.com/henrysachs/financensor/compare/v0.8.0...v0.9.0) (2026-05-05)
+
+
+### Bug Fixes
+
+* add script for local import ([c32722f](https://github.com/henrysachs/financensor/commit/c32722f1e42d2419d682b0052be227377f783a3a))
+
+
+### Features
+
+* add backend observability (metrics, structured logging, traceID) ([9768a6e](https://github.com/henrysachs/financensor/commit/9768a6e23804ab86a16ff39a7f6fa272fcf37726))
+
 # [0.8.0](https://github.com/henrysachs/financensor/compare/v0.7.0...v0.8.0) (2026-05-04)
 
 
