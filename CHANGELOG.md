@@ -1,3 +1,10 @@
+## [0.15.1](https://github.com/henrysachs/financensor/compare/v0.15.0...v0.15.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* SettlementsView fetches fresh purchases on mount ([21a9f0c](https://github.com/henrysachs/financensor/commit/21a9f0cb1674dc0128762aea533572d30d7e7d6e))
+
 # [0.15.0](https://github.com/henrysachs/financensor/compare/v0.14.0...v0.15.0) (2026-05-07)
 
 
