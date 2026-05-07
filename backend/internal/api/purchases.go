@@ -19,7 +19,7 @@ type PurchaseInput struct {
 	GroupID string `path:"groupID" doc:"Group ID"`
 	Body    struct {
 		Description  string   `json:"description" minLength:"1" doc:"Purchase description"`
-		AmountCents  int64    `json:"amountCents" minimum:"1" doc:"Amount in cents"`
+		AmountCents  int64    `json:"amountCents" doc:"Amount in cents (negative for refunds)"`
 		PaidByUserID string   `json:"paidByUserId" minLength:"1" doc:"User who paid"`
 		CategoryID   *string  `json:"categoryId,omitempty" doc:"Category ID"`
 		TripID       *string  `json:"tripId,omitempty" doc:"Trip ID"`
@@ -32,7 +32,7 @@ type PurchaseBulkInput struct {
 	GroupID string `path:"groupID" doc:"Group ID"`
 	Body    []struct {
 		Description  string   `json:"description" minLength:"1" doc:"Purchase description"`
-		AmountCents  int64    `json:"amountCents" minimum:"1" doc:"Amount in cents"`
+		AmountCents  int64    `json:"amountCents" doc:"Amount in cents (negative for refunds)"`
 		PaidByUserID string   `json:"paidByUserId" minLength:"1" doc:"User who paid"`
 		CategoryID   *string  `json:"categoryId,omitempty" doc:"Category ID"`
 		TripID       *string  `json:"tripId,omitempty" doc:"Trip ID"`
@@ -131,7 +131,7 @@ func registerPurchaseRoutes(api huma.API, db *sqlx.DB) {
 
 		ids := make([]string, 0, len(input.Body))
 		for _, req := range input.Body {
-			if req.Description == "" || req.AmountCents <= 0 || req.PaidByUserID == "" {
+			if req.Description == "" || req.AmountCents == 0 || req.PaidByUserID == "" {
 				continue
 			}
 			id, err := insertPurchase(db, input.GroupID, userID, purchaseReq{
