@@ -1,3 +1,10 @@
+# [0.16.0](https://github.com/henrysachs/financensor/compare/v0.15.1...v0.16.0) (2026-05-07)
+
+
+### Features
+
+* repository seam, auth middleware, frontend decomposition, generated types ([2b1ecf7](https://github.com/henrysachs/financensor/commit/2b1ecf773d41768d9a63d39570404336cb1dfe5d))
+
 ## [0.15.1](https://github.com/henrysachs/financensor/compare/v0.15.0...v0.15.1) (2026-05-07)
 
 
