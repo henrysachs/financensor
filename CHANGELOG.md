@@ -1,3 +1,10 @@
+## [0.16.1](https://github.com/henrysachs/financensor/compare/v0.16.0...v0.16.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* add .npmrc with legacy-peer-deps for openapi-typescript TS6 compat ([11021d6](https://github.com/henrysachs/financensor/commit/11021d6421b232f877815560361180b96227009f))
+
 # [0.16.0](https://github.com/henrysachs/financensor/compare/v0.15.1...v0.16.0) (2026-05-07)
 
 
