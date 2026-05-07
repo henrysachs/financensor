@@ -61,3 +61,17 @@ Local dev: create `backend/.env` (loaded by godotenv). See `backend/.env.example
 - Amounts stored as `int64` cents (`amount_cents`)
 - UUIDs as TEXT primary keys (generated via `github.com/google/uuid`)
 - REST API prefix: `/api/v1`
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in this repo's GitHub Issues via `gh`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the canonical labels `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Domain docs use a single-context layout rooted at `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.

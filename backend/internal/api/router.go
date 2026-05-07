@@ -10,12 +10,14 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/henrysachs/financensor/backend/internal/auth"
 	mw "github.com/henrysachs/financensor/backend/internal/middleware"
-	"github.com/jmoiron/sqlx"
+	"github.com/henrysachs/financensor/backend/internal/repository"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
-func NewRouter(db *sqlx.DB) http.Handler {
+const uploadsDir = "uploads"
+
+func NewRouter(repo repository.Repository, storage repository.ReceiptStorage) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
@@ -37,7 +39,6 @@ func NewRouter(db *sqlx.DB) http.Handler {
 	r.Use(mw.PrometheusMetrics)
 	r.Use(mw.SlogRequestLogger)
 
-	// Prometheus metrics endpoint (internal only, not exposed via Traefik)
 	r.Get("/metrics", promhttp.Handler().ServeHTTP)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -46,49 +47,54 @@ func NewRouter(db *sqlx.DB) http.Handler {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// Serve uploaded receipts (protected)
 	fileServer := http.FileServer(http.Dir(uploadsDir))
 	r.Group(func(r chi.Router) {
-		r.Use(auth.AuthMiddleware(db))
+		r.Use(auth.AuthMiddleware(repo))
 		r.Handle("/uploads/*", http.StripPrefix("/uploads/", fileServer))
 	})
 
-	// Plain chi routes for OAuth (redirects, not JSON)
 	r.Route("/api/v1/auth", func(r chi.Router) {
-		r.Get("/google/login", auth.HandleGoogleLogin)
-		r.Get("/google/callback", auth.HandleGoogleCallback(db))
+		r.Get("/google/login", HandleGoogleLogin)
+		r.Get("/google/callback", HandleGoogleCallback(repo.Users()))
 	})
 
-	// Huma API config
 	apiConfig := huma.DefaultConfig("Financensor API", "1.0.0")
 	apiConfig.Servers = []*huma.Server{
 		{URL: "https://api.financensor.stammkneipe.dev"},
 	}
 
-	// Public Huma routes (OpenAPI docs)
 	r.Route("/api/v1", func(sub chi.Router) {
-		// Public sub-group for docs/schemas (no auth)
-		sub.Group(func(pub chi.Router) {
-			humachi.New(pub, apiConfig)
-			// Huma auto-registers /openapi.json, /docs, /schemas/* here
-		})
+		// Skip auth for Huma's built-in OpenAPI/docs/schemas endpoints
+		sub.Use(auth.AuthMiddlewareSkipping(repo, auth.PublicPaths{
+			Exact: []string{
+				"/api/v1/openapi.json",
+				"/api/v1/openapi.yaml",
+				"/api/v1/openapi-3.0.json",
+				"/api/v1/openapi-3.0.yaml",
+				"/api/v1/docs",
+			},
+			Prefixes: []string{
+				"/api/v1/schemas/",
+			},
+		}))
 
-		// Protected sub-group for all API endpoints
-		sub.Group(func(prot chi.Router) {
-			prot.Use(auth.AuthMiddleware(db))
+		humaAPI := humachi.New(sub, apiConfig)
 
-			api := humachi.New(prot, apiConfig)
+		memberMW := requireMember(humaAPI, repo)
+		adminMW := requireAdmin(humaAPI, repo)
 
-			registerGroupRoutes(api, db)
-			registerPurchaseRoutes(api, db)
-			registerCategoryRoutes(api, db)
-			registerSettlementRoutes(api, db)
-			registerUserRoutes(api, db)
-			registerReceiptRoutes(api, db)
-			registerInviteRoutes(api, db)
-			registerTripRoutes(api, db)
-			registerAPIKeyRoutes(api, db)
-		})
+		// Routes that don't require group membership (user-level)
+		registerUserRoutes(humaAPI, repo)
+
+		// Group-scoped routes with membership/admin middleware
+		registerGroupRoutes(humaAPI, repo, memberMW, adminMW)
+		registerPurchaseRoutes(humaAPI, repo, memberMW)
+		registerCategoryRoutes(humaAPI, repo, memberMW)
+		registerSettlementRoutes(humaAPI, repo, memberMW)
+		registerReceiptRoutes(humaAPI, repo, storage, memberMW)
+		registerInviteRoutes(humaAPI, repo, memberMW, adminMW)
+		registerTripRoutes(humaAPI, repo, memberMW, adminMW)
+		registerAPIKeyRoutes(humaAPI, repo, adminMW)
 	})
 
 	return r

@@ -5,10 +5,8 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/google/uuid"
-	"github.com/henrysachs/financensor/backend/internal/auth"
 	"github.com/henrysachs/financensor/backend/internal/model"
-	"github.com/jmoiron/sqlx"
+	"github.com/henrysachs/financensor/backend/internal/repository"
 )
 
 // --- Input/Output types ---
@@ -37,86 +35,54 @@ type ListCategoriesOutput struct {
 
 // --- Route registration ---
 
-func registerCategoryRoutes(api huma.API, db *sqlx.DB) {
+func registerCategoryRoutes(api huma.API, repo repository.Repository, member humaMW) {
 	huma.Register(api, huma.Operation{
-		OperationID: "create-category",
-		Method:      http.MethodPost,
-		Path:        "/groups/{groupID}/categories",
-		Summary:     "Create a category",
-		Tags:        []string{"Categories"},
+		OperationID:  "create-category",
+		Method:       http.MethodPost,
+		Path:         "/groups/{groupID}/categories",
+		Summary:      "Create a category",
+		Tags:         []string{"Categories"},
+		Middlewares:  huma.Middlewares{member},
 	}, func(ctx context.Context, input *CreateCategoryInput) (*CreateCategoryOutput, error) {
-		userID := auth.GetUserID(ctx)
-
-		if !isMember(db, input.GroupID, userID) {
-			return nil, huma.Error403Forbidden("not a member")
-		}
-
-		id := uuid.New().String()
-		_, err := db.Exec("INSERT INTO categories (id, group_id, name) VALUES (?, ?, ?)", id, input.GroupID, input.Body.Name)
+		id, err := repo.Categories().Create(ctx, input.GroupID, input.Body.Name)
 		if err != nil {
 			return nil, huma.Error409Conflict("category already exists")
 		}
-
 		resp := &CreateCategoryOutput{}
 		resp.Body.ID = id
 		return resp, nil
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "list-categories",
-		Method:      http.MethodGet,
-		Path:        "/groups/{groupID}/categories",
-		Summary:     "List categories for a group",
-		Tags:        []string{"Categories"},
+		OperationID:  "list-categories",
+		Method:       http.MethodGet,
+		Path:         "/groups/{groupID}/categories",
+		Summary:      "List categories for a group",
+		Tags:         []string{"Categories"},
+		Middlewares:  huma.Middlewares{member},
 	}, func(ctx context.Context, input *GroupPathParams) (*ListCategoriesOutput, error) {
-		userID := auth.GetUserID(ctx)
-
-		if !isMember(db, input.GroupID, userID) {
-			return nil, huma.Error403Forbidden("not a member")
-		}
-
-		var categories []model.Category
-		err := db.Select(&categories, "SELECT id, group_id, name FROM categories WHERE group_id = ?", input.GroupID)
+		categories, err := repo.Categories().List(ctx, input.GroupID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to list categories", err)
 		}
-
-		if categories == nil {
-			categories = []model.Category{}
-		}
-
 		return &ListCategoriesOutput{Body: categories}, nil
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "delete-category",
-		Method:      http.MethodDelete,
-		Path:        "/groups/{groupID}/categories/{categoryID}",
-		Summary:     "Delete a category",
-		Tags:        []string{"Categories"},
+		OperationID:  "delete-category",
+		Method:       http.MethodDelete,
+		Path:         "/groups/{groupID}/categories/{categoryID}",
+		Summary:      "Delete a category",
+		Tags:         []string{"Categories"},
+		Middlewares:  huma.Middlewares{member},
 	}, func(ctx context.Context, input *DeleteCategoryInput) (*StatusOutput, error) {
-		userID := auth.GetUserID(ctx)
-
-		if !isMember(db, input.GroupID, userID) {
-			return nil, huma.Error403Forbidden("not a member")
+		err := repo.Categories().Delete(ctx, input.GroupID, input.CategoryID)
+		if err == repository.ErrNotFound {
+			return nil, huma.Error404NotFound("category not found")
 		}
-
-		// Nullify category_id on purchases that reference this category
-		_, err := db.Exec("UPDATE purchases SET category_id = NULL WHERE category_id = ? AND group_id = ?", input.CategoryID, input.GroupID)
-		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to unassign purchases", err)
-		}
-
-		result, err := db.Exec("DELETE FROM categories WHERE id = ? AND group_id = ?", input.CategoryID, input.GroupID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to delete category", err)
 		}
-
-		rows, _ := result.RowsAffected()
-		if rows == 0 {
-			return nil, huma.Error404NotFound("category not found")
-		}
-
 		resp := &StatusOutput{}
 		resp.Body.Status = "deleted"
 		return resp, nil

@@ -1,9 +1,41 @@
 import { getToken } from './token'
 import { toast } from 'sonner'
+import type {
+  SchemaUser,
+  SchemaGroup,
+  SchemaCategory,
+  SchemaAssignment,
+  SchemaPurchaseWithAssignments,
+  SchemaSettlementResponse,
+  SchemaInvite,
+  SchemaTripWithTotal,
+  SchemaTrip,
+  SchemaApiKeyRow,
+  SchemaMemberWithUser,
+  SchemaPurchaseInputBody,
+} from './api-types.gen'
 
 const API_BASE = import.meta.env.PROD
   ? 'https://api.financensor.stammkneipe.dev/api/v1'
   : '/api/v1'
+
+// Domain types re-exported with clean names
+export type User = SchemaUser
+export type Group = SchemaGroup
+export type Category = SchemaCategory
+export type Assignment = SchemaAssignment
+export type PurchaseWithAssignments = Omit<SchemaPurchaseWithAssignments, 'assignments'> & {
+  assignments: Assignment[]
+}
+export type Settlement = SchemaSettlementResponse
+export type Invite = SchemaInvite
+export type Trip = SchemaTripWithTotal
+export type TripBase = SchemaTrip
+export type APIKey = SchemaApiKeyRow
+export type Member = SchemaMemberWithUser
+export type CreatePurchaseRequest = Omit<SchemaPurchaseInputBody, '$schema' | 'assignedTo'> & {
+  assignedTo: string[]
+}
 
 export class ApiError extends Error {
   readonly status: number
@@ -194,111 +226,4 @@ export const api = {
   claimGhostUser: (userId: string) => fetchAPI<void>(`/users/${userId}/claim`, { method: 'POST' }),
   mergeGhostUser: (groupId: string, ghostId: string, targetUserId: string) =>
     fetchAPI<void>(`/groups/${groupId}/members/${ghostId}/merge`, { method: 'POST', body: { targetUserId } }),
-}
-
-// Types
-export type User = {
-  id: string
-  name: string
-  email?: string
-  avatarUrl?: string
-  isGhost: boolean
-  createdAt: string
-}
-
-export type Member = {
-  id: string
-  name: string
-  originalName: string
-  nickname?: string
-  email?: string
-  avatarUrl?: string
-  isGhost: boolean
-  role: 'admin' | 'member'
-}
-
-export type Group = {
-  id: string
-  name: string
-  createdBy: string
-  createdAt: string
-}
-
-export type APIKey = {
-  id: string
-  groupId: string
-  label: string
-  actingAsUserId: string
-  createdByUserId: string
-  lastUsedAt?: string
-  revokedAt?: string
-  createdAt: string
-}
-
-export type Category = {
-  id: string
-  groupId: string
-  name: string
-}
-
-export type Purchase = {
-  id: string
-  groupId: string
-  tripId?: string
-  description: string
-  amountCents: number
-  paidByUserId: string
-  categoryId?: string
-  receiptUrl?: string
-  purchasedAt: string
-  createdBy: string
-  createdAt: string
-}
-
-export type Assignment = {
-  id: string
-  purchaseId: string
-  userId: string
-  customShareCents?: number
-}
-
-export type PurchaseWithAssignments = Purchase & {
-  assignments: Assignment[]
-}
-
-export type Settlement = {
-  fromUserId: string
-  toUserId: string
-  amountCents: number
-}
-
-export type Invite = {
-  id: string
-  groupId: string
-  maxUses?: number
-  useCount: number
-  expiresAt?: string
-  createdAt: string
-}
-
-export type Trip = {
-  id: string
-  groupId: string
-  name: string
-  description?: string
-  tripDate: string
-  createdBy: string
-  createdAt: string
-  totalCents: number
-  purchaseCount: number
-}
-
-export type CreatePurchaseRequest = {
-  description: string
-  amountCents: number
-  paidByUserId: string
-  categoryId?: string
-  tripId?: string
-  purchasedAt?: string
-  assignedTo: string[]
 }

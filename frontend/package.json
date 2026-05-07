@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "generate:api": "curl -sf http://localhost:8080/api/v1/openapi.json -o /tmp/financensor-openapi.json && npx openapi-typescript /tmp/financensor-openapi.json -o src/lib/api-types.gen.ts --export-type --root-types"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -44,6 +45,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.5.0",
+    "openapi-typescript": "^7.13.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.2",
     "vite": "^8.0.10"

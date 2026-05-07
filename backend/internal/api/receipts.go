@@ -5,17 +5,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
-	"github.com/henrysachs/financensor/backend/internal/auth"
-	"github.com/jmoiron/sqlx"
+	"github.com/henrysachs/financensor/backend/internal/repository"
 )
 
 const maxUploadSize = 10 << 20 // 10MB
-const uploadsDir = "uploads"
 
 // --- Input/Output types ---
 
@@ -35,24 +31,18 @@ type UploadReceiptOutput struct {
 
 // --- Route registration ---
 
-func registerReceiptRoutes(api huma.API, db *sqlx.DB) {
+func registerReceiptRoutes(api huma.API, repo repository.Repository, storage repository.ReceiptStorage, member humaMW) {
 	huma.Register(api, huma.Operation{
-		OperationID:   "upload-receipt",
-		Method:        http.MethodPost,
-		Path:          "/groups/{groupID}/purchases/{purchaseID}/receipt",
-		Summary:       "Upload a receipt",
-		Tags:          []string{"Purchases"},
-		MaxBodyBytes:  maxUploadSize,
+		OperationID:  "upload-receipt",
+		Method:       http.MethodPost,
+		Path:         "/groups/{groupID}/purchases/{purchaseID}/receipt",
+		Summary:      "Upload a receipt",
+		Tags:         []string{"Purchases"},
+		MaxBodyBytes: maxUploadSize,
+		Middlewares:  huma.Middlewares{member},
 	}, func(ctx context.Context, input *UploadReceiptInput) (*UploadReceiptOutput, error) {
-		userID := auth.GetUserID(ctx)
-
-		if !isMember(db, input.GroupID, userID) {
-			return nil, huma.Error403Forbidden("not a member")
-		}
-
-		var count int
-		err := db.Get(&count, "SELECT COUNT(*) FROM purchases WHERE id = ? AND group_id = ?", input.PurchaseID, input.GroupID)
-		if err != nil || count == 0 {
+		exists, err := repo.Receipts().PurchaseExists(ctx, input.GroupID, input.PurchaseID)
+		if err != nil || !exists {
 			return nil, huma.Error404NotFound("purchase not found")
 		}
 
@@ -65,30 +55,27 @@ func registerReceiptRoutes(api huma.API, db *sqlx.DB) {
 		if contentType != "image/jpeg" && contentType != "image/png" && contentType != "image/webp" && contentType != "application/pdf" {
 			return nil, huma.Error400BadRequest("only JPEG, PNG, WebP, and PDF files are allowed")
 		}
-		// Reset reader
 		file.Seek(0, io.SeekStart)
 
-		groupDir := filepath.Join(uploadsDir, input.GroupID)
-		if err := os.MkdirAll(groupDir, 0o755); err != nil {
-			return nil, huma.Error500InternalServerError("failed to create upload directory", err)
+		ext := ""
+		switch contentType {
+		case "image/jpeg":
+			ext = ".jpg"
+		case "image/png":
+			ext = ".png"
+		case "image/webp":
+			ext = ".webp"
+		case "application/pdf":
+			ext = ".pdf"
 		}
-
-		ext := filepath.Ext(file.Filename)
 		filename := fmt.Sprintf("%s%s", uuid.New().String(), ext)
-		filePath := filepath.Join(groupDir, filename)
 
-		dst, err := os.Create(filePath)
+		receiptURL, err := storage.Save(ctx, input.GroupID, filename, file)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to save file", err)
 		}
-		defer dst.Close()
 
-		if _, err := io.Copy(dst, file); err != nil {
-			return nil, huma.Error500InternalServerError("failed to write file", err)
-		}
-
-		receiptURL := fmt.Sprintf("/uploads/%s/%s", input.GroupID, filename)
-		_, err = db.Exec("UPDATE purchases SET receipt_url = ? WHERE id = ?", receiptURL, input.PurchaseID)
+		err = repo.Receipts().SetReceiptURL(ctx, input.PurchaseID, receiptURL)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to update purchase", err)
 		}

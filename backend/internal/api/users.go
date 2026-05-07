@@ -5,11 +5,9 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/google/uuid"
-	"github.com/henrysachs/financensor/backend/internal/auth"
 	"github.com/henrysachs/financensor/backend/internal/metrics"
 	"github.com/henrysachs/financensor/backend/internal/model"
-	"github.com/jmoiron/sqlx"
+	"github.com/henrysachs/financensor/backend/internal/repository"
 )
 
 // --- Input/Output types ---
@@ -44,7 +42,7 @@ type AdminClaimGhostInput struct {
 
 // --- Route registration ---
 
-func registerUserRoutes(api huma.API, db *sqlx.DB) {
+func registerUserRoutes(api huma.API, repo repository.Repository) {
 	huma.Register(api, huma.Operation{
 		OperationID: "get-me",
 		Method:      http.MethodGet,
@@ -52,14 +50,12 @@ func registerUserRoutes(api huma.API, db *sqlx.DB) {
 		Summary:     "Get current user",
 		Tags:        []string{"Users"},
 	}, func(ctx context.Context, input *struct{}) (*GetMeOutput, error) {
-		userID := auth.GetUserID(ctx)
+		userID := getUserID(ctx)
 
-		var user model.User
-		err := db.Get(&user, "SELECT id, name, email, avatar_url, is_ghost, created_at FROM users WHERE id = ?", userID)
+		user, err := repo.Users().GetByID(ctx, userID)
 		if err != nil {
 			return nil, huma.Error404NotFound("user not found")
 		}
-
 		return &GetMeOutput{Body: user}, nil
 	})
 
@@ -70,11 +66,7 @@ func registerUserRoutes(api huma.API, db *sqlx.DB) {
 		Summary:     "Create a ghost user",
 		Tags:        []string{"Users"},
 	}, func(ctx context.Context, input *CreateGhostUserInput) (*CreateGhostUserOutput, error) {
-		id := uuid.New().String()
-		_, err := db.Exec(
-			"INSERT INTO users (id, name, is_ghost) VALUES (?, ?, 1)",
-			id, input.Body.Name,
-		)
+		id, err := repo.Users().CreateGhost(ctx, input.Body.Name)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to create ghost user", err)
 		}
@@ -93,47 +85,18 @@ func registerUserRoutes(api huma.API, db *sqlx.DB) {
 		Summary:     "Claim a ghost user account",
 		Tags:        []string{"Users"},
 	}, func(ctx context.Context, input *ClaimGhostUserInput) (*StatusOutput, error) {
-		claimerID := auth.GetUserID(ctx)
+		claimerID := getUserID(ctx)
 
-		var target model.User
-		err := db.Get(&target, "SELECT id, is_ghost FROM users WHERE id = ?", input.UserID)
-		if err != nil {
+		err := repo.WithTx(ctx, func(r repository.Repository) error {
+			return r.Users().ClaimGhost(ctx, input.UserID, claimerID)
+		})
+		if err == repository.ErrNotFound {
 			return nil, huma.Error404NotFound("user not found")
 		}
-
-		if !target.IsGhost {
+		if err == repository.ErrConflict {
 			return nil, huma.Error400BadRequest("user is not a ghost account")
 		}
-
-		tx, err := db.Beginx()
 		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to begin transaction", err)
-		}
-		defer tx.Rollback()
-
-		if _, err := tx.Exec("UPDATE group_members SET user_id = ? WHERE user_id = ?", claimerID, input.UserID); err != nil {
-			return nil, huma.Error500InternalServerError("failed to reassign group members", err)
-		}
-		if _, err := tx.Exec("UPDATE purchases SET paid_by_user_id = ? WHERE paid_by_user_id = ?", claimerID, input.UserID); err != nil {
-			return nil, huma.Error500InternalServerError("failed to reassign purchase payer", err)
-		}
-		if _, err := tx.Exec("UPDATE purchases SET created_by = ? WHERE created_by = ?", claimerID, input.UserID); err != nil {
-			return nil, huma.Error500InternalServerError("failed to reassign purchase creator", err)
-		}
-		if _, err := tx.Exec("UPDATE assignments SET user_id = ? WHERE user_id = ?", claimerID, input.UserID); err != nil {
-			return nil, huma.Error500InternalServerError("failed to reassign assignments", err)
-		}
-		if _, err := tx.Exec("UPDATE settlements SET from_user_id = ? WHERE from_user_id = ?", claimerID, input.UserID); err != nil {
-			return nil, huma.Error500InternalServerError("failed to reassign settlements from_user", err)
-		}
-		if _, err := tx.Exec("UPDATE settlements SET to_user_id = ? WHERE to_user_id = ?", claimerID, input.UserID); err != nil {
-			return nil, huma.Error500InternalServerError("failed to reassign settlements to_user", err)
-		}
-		if _, err := tx.Exec("DELETE FROM users WHERE id = ?", input.UserID); err != nil {
-			return nil, huma.Error500InternalServerError("failed to delete ghost user", err)
-		}
-
-		if err := tx.Commit(); err != nil {
 			return nil, huma.Error500InternalServerError("failed to claim ghost user", err)
 		}
 
@@ -149,62 +112,16 @@ func registerUserRoutes(api huma.API, db *sqlx.DB) {
 		Summary:     "Admin: merge a ghost user into a real user",
 		Tags:        []string{"Users"},
 	}, func(ctx context.Context, input *AdminClaimGhostInput) (*StatusOutput, error) {
-		adminID := auth.GetUserID(ctx)
-
-		if !isAdmin(db, input.GroupID, adminID) {
-			return nil, huma.Error403Forbidden("admin only")
+		err := repo.WithTx(ctx, func(r repository.Repository) error {
+			return r.Users().MergeGhost(ctx, input.GroupID, input.UserID, input.Body.TargetUserID)
+		})
+		if err == repository.ErrNotFound {
+			return nil, huma.Error404NotFound("user not found")
 		}
-
-		var target model.User
-		err := db.Get(&target, "SELECT id, is_ghost FROM users WHERE id = ?", input.UserID)
-		if err != nil {
-			return nil, huma.Error404NotFound("ghost user not found")
-		}
-		if !target.IsGhost {
+		if err == repository.ErrConflict {
 			return nil, huma.Error400BadRequest("user is not a ghost account")
 		}
-
-		// Verify target user exists
-		var targetExists bool
-		err = db.Get(&targetExists, "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?)", input.Body.TargetUserID)
-		if err != nil || !targetExists {
-			return nil, huma.Error404NotFound("target user not found")
-		}
-
-		tx, err := db.Beginx()
 		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to begin transaction", err)
-		}
-		defer tx.Rollback()
-
-		// Transfer all references from ghost to target
-		if _, err := tx.Exec("UPDATE purchases SET paid_by_user_id = ? WHERE paid_by_user_id = ?", input.Body.TargetUserID, input.UserID); err != nil {
-			return nil, huma.Error500InternalServerError("failed to reassign purchase payer", err)
-		}
-		if _, err := tx.Exec("UPDATE purchases SET created_by = ? WHERE created_by = ?", input.Body.TargetUserID, input.UserID); err != nil {
-			return nil, huma.Error500InternalServerError("failed to reassign purchase creator", err)
-		}
-		if _, err := tx.Exec("UPDATE assignments SET user_id = ? WHERE user_id = ?", input.Body.TargetUserID, input.UserID); err != nil {
-			return nil, huma.Error500InternalServerError("failed to reassign assignments", err)
-		}
-		if _, err := tx.Exec("UPDATE settlements SET from_user_id = ? WHERE from_user_id = ?", input.Body.TargetUserID, input.UserID); err != nil {
-			return nil, huma.Error500InternalServerError("failed to reassign settlements from_user", err)
-		}
-		if _, err := tx.Exec("UPDATE settlements SET to_user_id = ? WHERE to_user_id = ?", input.Body.TargetUserID, input.UserID); err != nil {
-			return nil, huma.Error500InternalServerError("failed to reassign settlements to_user", err)
-		}
-
-		// Remove ghost from group_members (target should already be a member)
-		if _, err := tx.Exec("DELETE FROM group_members WHERE user_id = ? AND group_id = ?", input.UserID, input.GroupID); err != nil {
-			return nil, huma.Error500InternalServerError("failed to remove ghost group member", err)
-		}
-
-		// Delete ghost user
-		if _, err := tx.Exec("DELETE FROM users WHERE id = ?", input.UserID); err != nil {
-			return nil, huma.Error500InternalServerError("failed to delete ghost user", err)
-		}
-
-		if err := tx.Commit(); err != nil {
 			return nil, huma.Error500InternalServerError("failed to merge ghost user", err)
 		}
 

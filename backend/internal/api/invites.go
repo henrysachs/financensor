@@ -6,10 +6,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/google/uuid"
-	"github.com/henrysachs/financensor/backend/internal/auth"
-	"github.com/henrysachs/financensor/backend/internal/model"
-	"github.com/jmoiron/sqlx"
+	"github.com/henrysachs/financensor/backend/internal/repository"
 )
 
 // --- Input/Output types ---
@@ -34,17 +31,7 @@ type InviteOutput struct {
 }
 
 type ListInvitesOutput struct {
-	Body []inviteRow
-}
-
-type inviteRow struct {
-	ID        string  `json:"id" db:"id"`
-	GroupID   string  `json:"groupId" db:"group_id"`
-	CreatedBy string  `json:"createdBy" db:"created_by"`
-	MaxUses   *int    `json:"maxUses,omitempty" db:"max_uses"`
-	UseCount  int     `json:"useCount" db:"use_count"`
-	ExpiresAt *string `json:"expiresAt,omitempty" db:"expires_at"`
-	CreatedAt string  `json:"createdAt" db:"created_at"`
+	Body []repository.Invite
 }
 
 type AcceptInviteInput struct {
@@ -65,96 +52,69 @@ type DeleteInviteInput struct {
 
 // --- Route registration ---
 
-func registerInviteRoutes(api huma.API, db *sqlx.DB) {
+func registerInviteRoutes(api huma.API, repo repository.Repository, member humaMW, admin humaMW) {
 	huma.Register(api, huma.Operation{
-		OperationID: "create-invite",
-		Method:      http.MethodPost,
-		Path:        "/groups/{groupID}/invites",
-		Summary:     "Create an invite link for a group",
-		Tags:        []string{"Invites"},
+		OperationID:  "create-invite",
+		Method:       http.MethodPost,
+		Path:         "/groups/{groupID}/invites",
+		Summary:      "Create an invite link for a group",
+		Tags:         []string{"Invites"},
+		Middlewares:  huma.Middlewares{admin},
 	}, func(ctx context.Context, input *CreateInviteInput) (*InviteOutput, error) {
-		userID := auth.GetUserID(ctx)
-
-		if !isAdmin(db, input.GroupID, userID) {
-			return nil, huma.Error403Forbidden("admin only")
-		}
-
-		id := uuid.New().String()
 		var expiresAt *time.Time
 		if input.Body.ExpiresIn != nil {
 			t := time.Now().Add(time.Duration(*input.Body.ExpiresIn) * time.Hour)
 			expiresAt = &t
 		}
 
-		_, err := db.Exec(
-			"INSERT INTO invites (id, group_id, created_by, expires_at, max_uses) VALUES (?, ?, ?, ?, ?)",
-			id, input.GroupID, userID, expiresAt, input.Body.MaxUses,
-		)
+		userID := getUserID(ctx)
+		invite, err := repo.Invites().Create(ctx, repository.CreateInviteParams{
+			GroupID:   input.GroupID,
+			CreatedBy: userID,
+			MaxUses:   input.Body.MaxUses,
+			ExpiresAt: expiresAt,
+		})
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to create invite", err)
 		}
 
 		resp := &InviteOutput{}
-		resp.Body.ID = id
-		resp.Body.GroupID = input.GroupID
-		resp.Body.MaxUses = input.Body.MaxUses
-		resp.Body.UseCount = 0
-		if expiresAt != nil {
-			s := expiresAt.Format(time.RFC3339)
-			resp.Body.ExpiresAt = &s
-		}
-		resp.Body.CreatedAt = time.Now().Format(time.RFC3339)
+		resp.Body.ID = invite.ID
+		resp.Body.GroupID = invite.GroupID
+		resp.Body.MaxUses = invite.MaxUses
+		resp.Body.UseCount = invite.UseCount
+		resp.Body.ExpiresAt = invite.ExpiresAt
+		resp.Body.CreatedAt = invite.CreatedAt
 		return resp, nil
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "list-invites",
-		Method:      http.MethodGet,
-		Path:        "/groups/{groupID}/invites",
-		Summary:     "List active invites for a group",
-		Tags:        []string{"Invites"},
+		OperationID:  "list-invites",
+		Method:       http.MethodGet,
+		Path:         "/groups/{groupID}/invites",
+		Summary:      "List active invites for a group",
+		Tags:         []string{"Invites"},
+		Middlewares:  huma.Middlewares{admin},
 	}, func(ctx context.Context, input *GroupPathParams) (*ListInvitesOutput, error) {
-		userID := auth.GetUserID(ctx)
-
-		if !isAdmin(db, input.GroupID, userID) {
-			return nil, huma.Error403Forbidden("admin only")
-		}
-
-		var invites []inviteRow
-		err := db.Select(&invites, `
-			SELECT id, group_id, created_by, max_uses, use_count, expires_at, created_at
-			FROM invites WHERE group_id = ?
-			ORDER BY created_at DESC
-		`, input.GroupID)
+		invites, err := repo.Invites().List(ctx, input.GroupID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to list invites", err)
 		}
-
-		if invites == nil {
-			invites = []inviteRow{}
-		}
-
 		return &ListInvitesOutput{Body: invites}, nil
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "delete-invite",
-		Method:      http.MethodDelete,
-		Path:        "/groups/{groupID}/invites/{inviteID}",
-		Summary:     "Delete an invite",
-		Tags:        []string{"Invites"},
+		OperationID:  "delete-invite",
+		Method:       http.MethodDelete,
+		Path:         "/groups/{groupID}/invites/{inviteID}",
+		Summary:      "Delete an invite",
+		Tags:         []string{"Invites"},
+		Middlewares:  huma.Middlewares{admin},
 	}, func(ctx context.Context, input *DeleteInviteInput) (*StatusOutput, error) {
-		userID := auth.GetUserID(ctx)
-
-		if !isAdmin(db, input.GroupID, userID) {
-			return nil, huma.Error403Forbidden("admin only")
-		}
-
-		_, err := db.Exec("DELETE FROM invites WHERE id = ? AND group_id = ?", input.InviteID, input.GroupID)
+		err := repo.Invites().Delete(ctx, input.GroupID, input.InviteID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to delete invite", err)
 		}
-
 		resp := &StatusOutput{}
 		resp.Body.Status = "deleted"
 		return resp, nil
@@ -167,63 +127,22 @@ func registerInviteRoutes(api huma.API, db *sqlx.DB) {
 		Summary:     "Accept an invite and join the group",
 		Tags:        []string{"Invites"},
 	}, func(ctx context.Context, input *AcceptInviteInput) (*AcceptInviteOutput, error) {
-		userID := auth.GetUserID(ctx)
+		userID := getUserID(ctx)
 
-		// Fetch invite
-		var invite struct {
-			ID        string  `db:"id"`
-			GroupID   string  `db:"group_id"`
-			MaxUses   *int    `db:"max_uses"`
-			UseCount  int     `db:"use_count"`
-			ExpiresAt *string `db:"expires_at"`
-		}
-		err := db.Get(&invite, "SELECT id, group_id, max_uses, use_count, expires_at FROM invites WHERE id = ?", input.InviteID)
-		if err != nil {
+		groupID, groupName, err := repo.Invites().Accept(ctx, input.InviteID, userID)
+		if err == repository.ErrNotFound {
 			return nil, huma.Error404NotFound("invite not found or expired")
 		}
-
-		// Check expiry
-		if invite.ExpiresAt != nil {
-			exp, _ := time.Parse("2006-01-02 15:04:05", *invite.ExpiresAt)
-			if time.Now().After(exp) {
-				return nil, huma.Error410Gone("invite expired")
-			}
+		if err == repository.ErrExpired {
+			return nil, huma.Error410Gone("invite expired or max uses reached")
 		}
-
-		// Check max uses
-		if invite.MaxUses != nil && invite.UseCount >= *invite.MaxUses {
-			return nil, huma.Error410Gone("invite has reached max uses")
-		}
-
-		// Check if already a member
-		if isMember(db, invite.GroupID, userID) {
-			// Already a member, just return the group info
-			var group model.Group
-			db.Get(&group, "SELECT id, name FROM groups WHERE id = ?", invite.GroupID)
-			resp := &AcceptInviteOutput{}
-			resp.Body.GroupID = invite.GroupID
-			resp.Body.GroupName = group.Name
-			return resp, nil
-		}
-
-		// Add as member
-		_, err = db.Exec(
-			"INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)",
-			invite.GroupID, userID, model.RoleMember,
-		)
 		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to join group", err)
+			return nil, huma.Error500InternalServerError("failed to accept invite", err)
 		}
-
-		// Increment use count
-		db.Exec("UPDATE invites SET use_count = use_count + 1 WHERE id = ?", invite.ID)
-
-		var group model.Group
-		db.Get(&group, "SELECT id, name FROM groups WHERE id = ?", invite.GroupID)
 
 		resp := &AcceptInviteOutput{}
-		resp.Body.GroupID = invite.GroupID
-		resp.Body.GroupName = group.Name
+		resp.Body.GroupID = groupID
+		resp.Body.GroupName = groupName
 		return resp, nil
 	})
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/henrysachs/financensor/backend/internal/api"
 	"github.com/henrysachs/financensor/backend/internal/db"
+	"github.com/henrysachs/financensor/backend/internal/repository/sqlite"
 	"github.com/henrysachs/financensor/backend/internal/telemetry"
 	"github.com/joho/godotenv"
 )
@@ -48,7 +49,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	router := api.NewRouter(database)
+	repo := sqlite.New(database)
+	storage := &sqlite.LocalReceiptStorage{UploadsDir: "uploads"}
+
+	router := api.NewRouter(repo, storage)
 
 	srv := &http.Server{
 		Addr:         ":8080",

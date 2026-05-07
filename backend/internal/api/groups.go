@@ -2,17 +2,12 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/google/uuid"
-	"github.com/henrysachs/financensor/backend/internal/auth"
-	idb "github.com/henrysachs/financensor/backend/internal/db"
 	"github.com/henrysachs/financensor/backend/internal/metrics"
 	"github.com/henrysachs/financensor/backend/internal/model"
-	"github.com/jmoiron/sqlx"
+	"github.com/henrysachs/financensor/backend/internal/repository"
 )
 
 // --- Input/Output types ---
@@ -74,16 +69,7 @@ type UpdateMemberNicknameInput struct {
 	}
 }
 
-type MemberResponse struct {
-	ID           string  `json:"id" db:"id"`
-	Name         string  `json:"name" db:"name"`
-	OriginalName string  `json:"originalName" db:"original_name"`
-	Nickname     *string `json:"nickname,omitempty" db:"nickname"`
-	Email        *string `json:"email,omitempty" db:"email"`
-	AvatarURL    *string `json:"avatarUrl,omitempty" db:"avatar_url"`
-	IsGhost      bool    `json:"isGhost" db:"is_ghost"`
-	Role         string  `json:"role" db:"role"`
-}
+type MemberResponse = repository.MemberWithUser
 
 type ListMembersOutput struct {
 	Body []MemberResponse
@@ -91,7 +77,7 @@ type ListMembersOutput struct {
 
 // --- Route registration ---
 
-func registerGroupRoutes(api huma.API, db *sqlx.DB) {
+func registerGroupRoutes(api huma.API, repo repository.Repository, member humaMW, admin humaMW) {
 	huma.Register(api, huma.Operation{
 		OperationID: "create-group",
 		Method:      http.MethodPost,
@@ -99,44 +85,19 @@ func registerGroupRoutes(api huma.API, db *sqlx.DB) {
 		Summary:     "Create a group",
 		Tags:        []string{"Groups"},
 	}, func(ctx context.Context, input *CreateGroupInput) (*CreateGroupOutput, error) {
-		defer idb.ObserveQuery("create_group")()
-		userID := auth.GetUserID(ctx)
+		userID := getUserID(ctx)
 
-		groupID := uuid.New().String()
-		tx, err := db.Beginx()
-		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to begin transaction", err)
-		}
-		defer tx.Rollback()
-
-		_, err = tx.Exec(
-			"INSERT INTO groups (id, name, created_by) VALUES (?, ?, ?)",
-			groupID, input.Body.Name, userID,
-		)
+		var groupID string
+		err := repo.WithTx(ctx, func(r repository.Repository) error {
+			var txErr error
+			groupID, txErr = r.Groups().Create(ctx, input.Body.Name, userID)
+			if txErr != nil {
+				return txErr
+			}
+			return r.Categories().CreateDefaults(ctx, groupID)
+		})
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to create group", err)
-		}
-
-		_, err = tx.Exec(
-			"INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)",
-			groupID, userID, model.RoleAdmin,
-		)
-		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to add admin member", err)
-		}
-
-		// Seed default categories
-		defaultCategories := []string{"Essen", "Getränke", "Alkohol", "Haushalt", "Transport", "Freizeit"}
-		for _, name := range defaultCategories {
-			catID := uuid.New().String()
-			_, err = tx.Exec("INSERT INTO categories (id, group_id, name) VALUES (?, ?, ?)", catID, groupID, name)
-			if err != nil {
-				return nil, huma.Error500InternalServerError("failed to seed categories", err)
-			}
-		}
-
-		if err := tx.Commit(); err != nil {
-			return nil, huma.Error500InternalServerError("failed to commit", err)
 		}
 
 		metrics.GroupsCreatedTotal.Inc()
@@ -153,157 +114,106 @@ func registerGroupRoutes(api huma.API, db *sqlx.DB) {
 		Summary:     "List groups for current user",
 		Tags:        []string{"Groups"},
 	}, func(ctx context.Context, input *struct{}) (*ListGroupsOutput, error) {
-		userID := auth.GetUserID(ctx)
+		userID := getUserID(ctx)
 
-		var groups []model.Group
-		err := db.Select(&groups, `
-			SELECT g.id, g.name, g.created_by, g.created_at
-			FROM groups g
-			JOIN group_members gm ON g.id = gm.group_id
-			WHERE gm.user_id = ?
-			ORDER BY g.created_at DESC
-		`, userID)
+		groups, err := repo.Groups().List(ctx, userID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to list groups", err)
-		}
-
-		if groups == nil {
-			groups = []model.Group{}
 		}
 
 		return &ListGroupsOutput{Body: groups}, nil
 	})
 
+	// Group-scoped routes below rely on RequireGroupMember/RequireGroupAdmin middleware.
+
 	huma.Register(api, huma.Operation{
-		OperationID: "get-group",
-		Method:      http.MethodGet,
-		Path:        "/groups/{groupID}",
-		Summary:     "Get group details",
-		Tags:        []string{"Groups"},
+		OperationID:  "get-group",
+		Method:       http.MethodGet,
+		Path:         "/groups/{groupID}",
+		Summary:      "Get group details",
+		Tags:         []string{"Groups"},
+		Middlewares:  huma.Middlewares{member},
 	}, func(ctx context.Context, input *GroupPathParams) (*GetGroupOutput, error) {
-		userID := auth.GetUserID(ctx)
-
-		if !isMember(db, input.GroupID, userID) {
-			return nil, huma.Error403Forbidden("not a member of this group")
-		}
-
-		var group model.Group
-		err := db.Get(&group, "SELECT id, name, created_by, created_at FROM groups WHERE id = ?", input.GroupID)
+		group, err := repo.Groups().Get(ctx, input.GroupID)
 		if err != nil {
 			return nil, huma.Error404NotFound("group not found")
 		}
-
 		return &GetGroupOutput{Body: group}, nil
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "update-group",
-		Method:      http.MethodPut,
-		Path:        "/groups/{groupID}",
-		Summary:     "Update group name",
-		Tags:        []string{"Groups"},
+		OperationID:  "update-group",
+		Method:       http.MethodPut,
+		Path:         "/groups/{groupID}",
+		Summary:      "Update group name",
+		Tags:         []string{"Groups"},
+		Middlewares:  huma.Middlewares{admin},
 	}, func(ctx context.Context, input *UpdateGroupInput) (*StatusOutput, error) {
-		userID := auth.GetUserID(ctx)
-
-		if !isAdmin(db, input.GroupID, userID) {
-			return nil, huma.Error403Forbidden("admin only")
-		}
-
-		_, err := db.Exec("UPDATE groups SET name = ? WHERE id = ?", input.Body.Name, input.GroupID)
+		err := repo.Groups().Update(ctx, input.GroupID, input.Body.Name)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to update group", err)
 		}
-
 		resp := &StatusOutput{}
 		resp.Body.Status = "updated"
 		return resp, nil
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "delete-group",
-		Method:      http.MethodDelete,
-		Path:        "/groups/{groupID}",
-		Summary:     "Delete a group",
-		Tags:        []string{"Groups"},
+		OperationID:  "delete-group",
+		Method:       http.MethodDelete,
+		Path:         "/groups/{groupID}",
+		Summary:      "Delete a group",
+		Tags:         []string{"Groups"},
+		Middlewares:  huma.Middlewares{admin},
 	}, func(ctx context.Context, input *GroupPathParams) (*StatusOutput, error) {
-		userID := auth.GetUserID(ctx)
-
-		if !isAdmin(db, input.GroupID, userID) {
-			return nil, huma.Error403Forbidden("admin only")
-		}
-
-		_, err := db.Exec("DELETE FROM groups WHERE id = ?", input.GroupID)
+		err := repo.Groups().Delete(ctx, input.GroupID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to delete group", err)
 		}
-
 		resp := &StatusOutput{}
 		resp.Body.Status = "deleted"
 		return resp, nil
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "list-members",
-		Method:      http.MethodGet,
-		Path:        "/groups/{groupID}/members",
-		Summary:     "List group members",
-		Tags:        []string{"Groups"},
+		OperationID:  "list-members",
+		Method:       http.MethodGet,
+		Path:         "/groups/{groupID}/members",
+		Summary:      "List group members",
+		Tags:         []string{"Groups"},
+		Middlewares:  huma.Middlewares{member},
 	}, func(ctx context.Context, input *GroupPathParams) (*ListMembersOutput, error) {
-		userID := auth.GetUserID(ctx)
-
-		if !isMember(db, input.GroupID, userID) {
-			return nil, huma.Error403Forbidden("not a member")
-		}
-
-		var members []MemberResponse
-		err := db.Select(&members, `
-			SELECT u.id,
-			       COALESCE(NULLIF(gm.nickname, ''), u.name) AS name,
-			       u.name AS original_name,
-			       gm.nickname,
-			       u.email,
-			       u.avatar_url,
-			       u.is_ghost,
-			       gm.role
-			FROM users u
-			JOIN group_members gm ON u.id = gm.user_id
-			WHERE gm.group_id = ?
-			ORDER BY gm.role ASC, COALESCE(NULLIF(gm.nickname, ''), u.name) ASC
-		`, input.GroupID)
+		members, err := repo.Groups().ListMembers(ctx, input.GroupID)
 		if err != nil {
-			return nil, huma.Error500InternalServerError(fmt.Sprintf("failed to list members: %v", err))
+			return nil, huma.Error500InternalServerError("failed to list members", err)
 		}
-
-		if members == nil {
-			members = []MemberResponse{}
-		}
-
 		return &ListMembersOutput{Body: members}, nil
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "update-member-nickname",
-		Method:      http.MethodPut,
-		Path:        "/groups/{groupID}/members/{userID}",
-		Summary:     "Update nickname for a group member",
-		Tags:        []string{"Groups"},
+		OperationID:  "update-member-nickname",
+		Method:       http.MethodPut,
+		Path:         "/groups/{groupID}/members/{userID}",
+		Summary:      "Update nickname for a group member",
+		Tags:         []string{"Groups"},
+		Middlewares:  huma.Middlewares{member},
 	}, func(ctx context.Context, input *UpdateMemberNicknameInput) (*StatusOutput, error) {
-		userID := auth.GetUserID(ctx)
+		userID := getUserID(ctx)
 
-		if userID != input.UserID && !isAdmin(db, input.GroupID, userID) {
-			return nil, huma.Error403Forbidden("only self or admin")
+		// Self or admin can update nickname
+		if userID != input.UserID {
+			isAdmin, _ := repo.Groups().IsAdmin(ctx, input.GroupID, userID)
+			if !isAdmin {
+				return nil, huma.Error403Forbidden("only self or admin")
+			}
 		}
-		if !isMember(db, input.GroupID, input.UserID) {
+
+		isMember, _ := repo.Groups().IsMember(ctx, input.GroupID, input.UserID)
+		if !isMember {
 			return nil, huma.Error404NotFound("member not found")
 		}
 
-		nickname := strings.TrimSpace(input.Body.Nickname)
-		_, err := db.Exec(
-			"UPDATE group_members SET nickname = NULLIF(?, '') WHERE group_id = ? AND user_id = ?",
-			nickname,
-			input.GroupID,
-			input.UserID,
-		)
+		err := repo.Groups().UpdateNickname(ctx, input.GroupID, input.UserID, input.Body.Nickname)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to update nickname", err)
 		}
@@ -314,70 +224,41 @@ func registerGroupRoutes(api huma.API, db *sqlx.DB) {
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "add-member",
-		Method:      http.MethodPost,
-		Path:        "/groups/{groupID}/members",
-		Summary:     "Add a member to group",
-		Tags:        []string{"Groups"},
+		OperationID:  "add-member",
+		Method:       http.MethodPost,
+		Path:         "/groups/{groupID}/members",
+		Summary:      "Add a member to group",
+		Tags:         []string{"Groups"},
+		Middlewares:  huma.Middlewares{admin},
 	}, func(ctx context.Context, input *AddMemberInput) (*StatusOutput, error) {
-		userID := auth.GetUserID(ctx)
-
-		if !isAdmin(db, input.GroupID, userID) {
-			return nil, huma.Error403Forbidden("admin only")
-		}
-
-		_, err := db.Exec(
-			"INSERT OR IGNORE INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)",
-			input.GroupID, input.Body.UserID, model.RoleMember,
-		)
+		err := repo.Groups().AddMember(ctx, input.GroupID, input.Body.UserID, model.RoleMember)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to add member", err)
 		}
-
 		resp := &StatusOutput{}
 		resp.Body.Status = "added"
 		return resp, nil
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "remove-member",
-		Method:      http.MethodDelete,
-		Path:        "/groups/{groupID}/members/{userID}",
-		Summary:     "Remove a member from group",
-		Tags:        []string{"Groups"},
+		OperationID:  "remove-member",
+		Method:       http.MethodDelete,
+		Path:         "/groups/{groupID}/members/{userID}",
+		Summary:      "Remove a member from group",
+		Tags:         []string{"Groups"},
+		Middlewares:  huma.Middlewares{admin},
 	}, func(ctx context.Context, input *RemoveMemberInput) (*StatusOutput, error) {
-		userID := auth.GetUserID(ctx)
-
-		if !isAdmin(db, input.GroupID, userID) {
-			return nil, huma.Error403Forbidden("admin only")
-		}
-
+		userID := getUserID(ctx)
 		if input.UserID == userID {
 			return nil, huma.Error400BadRequest("cannot remove yourself")
 		}
 
-		_, err := db.Exec(
-			"DELETE FROM group_members WHERE group_id = ? AND user_id = ?",
-			input.GroupID, input.UserID,
-		)
+		err := repo.Groups().RemoveMember(ctx, input.GroupID, input.UserID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to remove member", err)
 		}
-
 		resp := &StatusOutput{}
 		resp.Body.Status = "removed"
 		return resp, nil
 	})
-}
-
-func isMember(db *sqlx.DB, groupID, userID string) bool {
-	var count int
-	err := db.Get(&count, "SELECT COUNT(*) FROM group_members WHERE group_id = ? AND user_id = ?", groupID, userID)
-	return err == nil && count > 0
-}
-
-func isAdmin(db *sqlx.DB, groupID, userID string) bool {
-	var role string
-	err := db.Get(&role, "SELECT role FROM group_members WHERE group_id = ? AND user_id = ?", groupID, userID)
-	return err == nil && role == string(model.RoleAdmin)
 }

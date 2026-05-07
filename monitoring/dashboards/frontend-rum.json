@@ -1,5 +1,7 @@
 {
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": []
+  },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 2,
@@ -8,146 +10,452 @@
     {
       "title": "",
       "type": "text",
-      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 2,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "options": {
         "mode": "markdown",
-        "content": "# Frontend RUM (Faro)\nErrors, Web Vitals, Sessions, Performance — via Grafana Alloy"
+        "content": "# Frontend RUM (Faro)\nErrors, Web Vitals, Sessions, Performance \u2014 via Grafana Alloy"
       }
     },
     {
       "title": "Frontend Errors",
       "type": "logs",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 2 },
-      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 2
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
       "targets": [
-        { "expr": "{service_name=\"financensor-frontend\"} | json | kind = `exception`", "refId": "A" }
+        {
+          "expr": "{service_name=\"financensor-frontend\"} !~ `session_recording` | json | __error__=\"\" | kind = `exception`",
+          "refId": "A"
+        }
       ],
-      "options": { "showTime": true, "sortOrder": "Descending", "enableLogDetails": true }
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true
+      }
     },
     {
       "title": "Error Count",
       "type": "timeseries",
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 10 },
-      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
       "targets": [
-        { "expr": "sum(count_over_time({service_name=\"financensor-frontend\"} | json | kind = `exception` [5m]))", "legendFormat": "errors/5m" }
+        {
+          "expr": "count_over_time({service_name=\"financensor-frontend\"} !~ `session_recording` | json | __error__=\"\" | kind = `exception` [5m])",
+          "legendFormat": "errors/5m"
+        }
       ],
-      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20, "lineWidth": 2 } } }
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 2
+          }
+        }
+      }
     },
     {
-      "title": "Log Events by Kind",
+      "title": "Events by Kind",
       "type": "timeseries",
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 10 },
-      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
       "targets": [
-        { "expr": "sum(count_over_time({service_name=\"financensor-frontend\"} | json | kind != `event` [5m])) by (kind)", "legendFormat": "{{kind}}" }
+        {
+          "expr": "sum by (kind) (count_over_time({service_name=\"financensor-frontend\"} !~ `session_recording` | json | __error__=\"\" | kind != `event` [5m]))",
+          "legendFormat": "{{kind}}"
+        }
       ],
-      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20, "lineWidth": 2, "stacking": { "mode": "normal" } } } }
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        }
+      }
     },
     {
-      "title": "Web Vitals — LCP (ms)",
+      "title": "Web Vitals \u2014 LCP (ms)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 5, "x": 0, "y": 16 },
-      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
       "targets": [
-        { "expr": "avg_over_time({service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | lcp != `` | unwrap lcp [1h])", "legendFormat": "LCP", "instant": true }
+        {
+          "expr": "avg_over_time({service_name=\"financensor-frontend\"} !~ `session_recording` | json | __error__=\"\" | kind = `measurement` | type = `web-vitals` | lcp != `` | unwrap lcp [$__range])",
+          "legendFormat": "LCP",
+          "instant": true
+        }
       ],
-      "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 2500}, {"color": "red", "value": 4000}] } } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2500
+              },
+              {
+                "color": "red",
+                "value": 4000
+              }
+            ]
+          }
+        }
+      }
     },
     {
-      "title": "Web Vitals — FCP (ms)",
+      "title": "Web Vitals \u2014 FCP (ms)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 5, "x": 5, "y": 16 },
-      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 5,
+        "y": 16
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
       "targets": [
-        { "expr": "avg_over_time({service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | fcp != `` | unwrap fcp [1h])", "legendFormat": "FCP", "instant": true }
+        {
+          "expr": "avg_over_time({service_name=\"financensor-frontend\"} !~ `session_recording` | json | __error__=\"\" | kind = `measurement` | type = `web-vitals` | fcp != `` | unwrap fcp [$__range])",
+          "legendFormat": "FCP",
+          "instant": true
+        }
       ],
-      "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1800}, {"color": "red", "value": 3000}] } } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1800
+              },
+              {
+                "color": "red",
+                "value": 3000
+              }
+            ]
+          }
+        }
+      }
     },
     {
-      "title": "Web Vitals — CLS",
+      "title": "Web Vitals \u2014 CLS",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 5, "x": 10, "y": 16 },
-      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 10,
+        "y": 16
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
       "targets": [
-        { "expr": "avg_over_time({service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | cls != `` | unwrap cls [1h])", "legendFormat": "CLS", "instant": true }
+        {
+          "expr": "avg_over_time({service_name=\"financensor-frontend\"} !~ `session_recording` | json | __error__=\"\" | kind = `measurement` | type = `web-vitals` | cls != `` | unwrap cls [$__range])",
+          "legendFormat": "CLS",
+          "instant": true
+        }
       ],
-      "fieldConfig": { "defaults": { "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 0.25}] } } }
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.1
+              },
+              {
+                "color": "red",
+                "value": 0.25
+              }
+            ]
+          }
+        }
+      }
     },
     {
-      "title": "Web Vitals — INP (ms)",
+      "title": "Web Vitals \u2014 INP (ms)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 5, "x": 15, "y": 16 },
-      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 15,
+        "y": 16
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
       "targets": [
-        { "expr": "avg_over_time({service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | inp != `` | unwrap inp [1h])", "legendFormat": "INP", "instant": true }
+        {
+          "expr": "avg_over_time({service_name=\"financensor-frontend\"} !~ `session_recording` | json | __error__=\"\" | kind = `measurement` | type = `web-vitals` | inp != `` | unwrap inp [$__range])",
+          "legendFormat": "INP",
+          "instant": true
+        }
       ],
-      "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 200}, {"color": "red", "value": 500}] } } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 200
+              },
+              {
+                "color": "red",
+                "value": 500
+              }
+            ]
+          }
+        }
+      }
     },
     {
-      "title": "Web Vitals — TTFB (ms)",
+      "title": "Web Vitals \u2014 TTFB (ms)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 16 },
-      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 16
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
       "targets": [
-        { "expr": "avg_over_time({service_name=\"financensor-frontend\"} | json | kind = `measurement` | type = `web-vitals` | ttfb != `` | unwrap ttfb [1h])", "legendFormat": "TTFB", "instant": true }
+        {
+          "expr": "avg_over_time({service_name=\"financensor-frontend\"} !~ `session_recording` | json | __error__=\"\" | kind = `measurement` | type = `web-vitals` | ttfb != `` | unwrap ttfb [$__range])",
+          "legendFormat": "TTFB",
+          "instant": true
+        }
       ],
-      "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 800}, {"color": "red", "value": 1800}] } } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 800
+              },
+              {
+                "color": "red",
+                "value": 1800
+              }
+            ]
+          }
+        }
+      }
     },
     {
-      "title": "Console Logs (warn/error)",
+      "title": "HTTP Requests (Faro fetch events)",
       "type": "logs",
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 20 },
-      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
       "targets": [
-        { "expr": "{service_name=\"financensor-frontend\"} | json | kind = `log`", "refId": "A" }
+        {
+          "expr": "{service_name=\"financensor-frontend\"} !~ `session_recording` | json | __error__=\"\" | kind = `event` | event_name = `faro.tracing.fetch`",
+          "refId": "A"
+        }
       ],
-      "options": { "showTime": true, "sortOrder": "Descending", "enableLogDetails": true }
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true
+      }
     },
     {
       "title": "Page Views",
       "type": "timeseries",
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 26 },
-      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
       "targets": [
-        { "expr": "sum(count_over_time({service_name=\"financensor-frontend\"} | json | kind = `event` | event_name = `view_changed` [5m]))", "legendFormat": "views/5m" }
+        {
+          "expr": "count_over_time({service_name=\"financensor-frontend\"} !~ `session_recording` | json | __error__=\"\" | kind = `event` | event_name = `view_changed` [5m])",
+          "legendFormat": "views/5m"
+        }
       ],
-      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20, "lineWidth": 2 } } }
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 2
+          }
+        }
+      }
     },
     {
       "title": "Sessions",
       "type": "timeseries",
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 26 },
-      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
       "targets": [
-        { "expr": "sum(count_over_time({service_name=\"financensor-frontend\"} | json | kind = `event` | event_name =~ `session_.*` [5m])) by (event_name)", "legendFormat": "{{event_name}}" }
+        {
+          "expr": "sum by (event_name) (count_over_time({service_name=\"financensor-frontend\"} !~ `session_recording` | json | __error__=\"\" | kind = `event` | event_name =~ `session_.*` [5m]))",
+          "legendFormat": "{{event_name}}"
+        }
       ],
-      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20, "lineWidth": 2 } } }
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 2
+          }
+        }
+      }
     },
     {
-      "title": "All Frontend Events",
+      "title": "All Frontend Signals (excl. session replay)",
       "type": "logs",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
-      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
       "targets": [
-        { "expr": "{service_name=\"financensor-frontend\"} | json | kind != `event` or event_name != `faro.session_recording.event`", "refId": "A" }
+        {
+          "expr": "{service_name=\"financensor-frontend\"} !~ `session_recording` | json | __error__=\"\" | event_name != `faro.session_recording.event`",
+          "refId": "A"
+        }
       ],
-      "options": { "showTime": true, "sortOrder": "Descending", "enableLogDetails": true }
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true
+      }
     },
     {
       "title": "Frontend Traces",
       "type": "table",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 40 },
-      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
       "targets": [
-        { "queryType": "traceqlSearch", "serviceName": "financensor-frontend", "limit": 20, "refId": "A" }
+        {
+          "queryType": "traceqlSearch",
+          "serviceName": "financensor-frontend",
+          "limit": 20,
+          "refId": "A"
+        }
       ]
     }
   ],
   "schemaVersion": 39,
-  "tags": ["frontend", "faro", "rum"],
-  "templating": { "list": [] },
-  "time": { "from": "now-1h", "to": "now" },
+  "tags": [
+    "frontend",
+    "faro",
+    "rum"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "title": "Frontend RUM (Faro)",
   "uid": "frontend-rum"
 }
