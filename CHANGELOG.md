@@ -1,3 +1,16 @@
+# [0.15.0](https://github.com/henrysachs/financensor/compare/v0.14.0...v0.15.0) (2026-05-07)
+
+
+### Bug Fixes
+
+* service worker must not intercept cross-origin requests ([4dc259e](https://github.com/henrysachs/financensor/commit/4dc259ef3980f4439b100583a84b66fb46238b02))
+* switch Faro log output to JSON format ([167d5d8](https://github.com/henrysachs/financensor/commit/167d5d8271cf7f6fcf7ba8d5c4dc16c189aedcee))
+
+
+### Features
+
+* allow negative amountCents for refunds ([a56f1f1](https://github.com/henrysachs/financensor/commit/a56f1f1d7c037d878dfb3891a01c023884570239))
+
 # [0.14.0](https://github.com/henrysachs/financensor/compare/v0.13.0...v0.14.0) (2026-05-05)
 
 
