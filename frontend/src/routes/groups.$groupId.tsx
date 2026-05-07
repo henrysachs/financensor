@@ -965,17 +965,23 @@ function PurchaseRow({
   )
 }
 
-function SettlementsView({ groupId, members, purchases, categories }: { groupId: string; members: Member[]; purchases: PurchaseWithAssignments[]; categories: Category[] }) {
+function SettlementsView({ groupId, members, purchases: initialPurchases, categories }: { groupId: string; members: Member[]; purchases: PurchaseWithAssignments[]; categories: Category[] }) {
   const [settlements, setSettlements] = useState<
     Array<{ fromUserId: string; toUserId: string; amountCents: number }>
   >([])
+  const [purchases, setPurchases] = useState(initialPurchases)
   const [loading, setLoading] = useState(true)
 
   const memberMap = new Map(members.map((m) => [m.id, m]))
 
   useEffect(() => {
-    api.getSettlements(groupId).then((result) => {
-      setSettlements(result)
+    setLoading(true)
+    Promise.all([
+      api.getSettlements(groupId),
+      api.listPurchases(groupId),
+    ]).then(([settlementsResult, purchasesResult]) => {
+      setSettlements(settlementsResult)
+      setPurchases(purchasesResult)
       setLoading(false)
     }).catch(() => setLoading(false))
   }, [groupId])
