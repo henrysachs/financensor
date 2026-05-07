@@ -1,3 +1,10 @@
+## [0.16.2](https://github.com/henrysachs/financensor/compare/v0.16.1...v0.16.2) (2026-05-07)
+
+
+### Bug Fixes
+
+* copy .npmrc into Docker build for legacy-peer-deps ([12f21cf](https://github.com/henrysachs/financensor/commit/12f21cfa74bffd221359ea688096a6f821cda8fc))
+
 ## [0.16.1](https://github.com/henrysachs/financensor/compare/v0.16.0...v0.16.1) (2026-05-07)
 
 
